@@ -219,6 +219,9 @@ program
       }
       console.log('');
 
+      // On first scan, ensure .comply/ is gitignored
+      await ensureGitignore(auditDir);
+
       // Exit with non-zero if there are violations
       if (s.nonCompliant > 0) {
         process.exit(1);
@@ -375,6 +378,9 @@ severity_levels:
     console.log(`\n  ✅ Policy file created: ${outputPath}\n`);
     console.log(`  Edit this file to customize your compliance rules,`);
     console.log(`  then run: comply scan --policy ${options.output}\n`);
+
+    // Ensure .comply/ is in .gitignore
+    await ensureGitignore('.comply');
 
     if (options.mcp) {
       const mcpConfig = {
@@ -708,6 +714,44 @@ function determineCIFailure(
       return (result.diff?.summary.newViolations || 0) > 0;
     default:
       return s.nonCompliant > 0;
+  }
+}
+
+/**
+ * Ensure .comply/ is in .gitignore so audit data doesn't get committed.
+ * Creates .gitignore if it doesn't exist. Idempotent.
+ */
+async function ensureGitignore(auditDir: string): Promise<void> {
+  // The .comply/ folder lives inside the auditDir's parent.
+  // Add it to the gitignore of that directory (typically the scanned repo when run in-place).
+  const { dirname, basename: baseName } = await import('node:path');
+  const parentDir = dirname(resolve(auditDir));
+  const folderName = baseName(resolve(auditDir));
+  const gitignorePath = join(parentDir, '.gitignore');
+
+  try {
+    let content: string;
+    try {
+      content = await readFile(gitignorePath, 'utf-8');
+    } catch {
+      content = '';
+    }
+
+    // Check if the audit folder is already ignored
+    const lines = content.split('\n');
+    const alreadyIgnored = lines.some(line => {
+      const trimmed = line.trim();
+      return trimmed === folderName || trimmed === `${folderName}/` || trimmed === `${folderName}/**`;
+    });
+
+    if (!alreadyIgnored) {
+      const suffix = content.endsWith('\n') || content === '' ? '' : '\n';
+      const block = `${suffix}\n# Comply OSS audit data (reports, snapshots, cache)\n${folderName}/\n`;
+      await writeFile(gitignorePath, content + block);
+      console.log(`  📝 Added ${folderName}/ to .gitignore`);
+    }
+  } catch {
+    // Non-fatal — user may not have write access or may not be in a git repo
   }
 }
 
