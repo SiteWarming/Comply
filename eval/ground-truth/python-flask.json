@@ -1,0 +1,12 @@
+{
+  "package": "flask",
+  "version": "3.0.0",
+  "ecosystem": "python",
+  "license": "BSD-3-Clause",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "Flask is BSD-3-Clause — permissive, no obligations"
+}

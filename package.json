@@ -1,0 +1,48 @@
+{
+  "name": "comply-oss",
+  "version": "0.1.0",
+  "description": "AI-powered open source license compliance agent. Scans repos, resolves licenses, analyzes usage context, and generates actionable compliance reports.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "comply": "dist/index.js",
+    "comply-mcp": "dist/mcp-server.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "lint": "tsc --noEmit"
+  },
+  "keywords": [
+    "license",
+    "compliance",
+    "audit",
+    "open-source",
+    "sbom",
+    "due-diligence",
+    "spdx",
+    "ai",
+    "agent"
+  ],
+  "author": "",
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "chalk": "^5.3.0",
+    "commander": "^12.1.0",
+    "glob": "^11.0.0",
+    "ora": "^8.1.0",
+    "yaml": "^2.6.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

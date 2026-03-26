@@ -1,0 +1,12 @@
+{
+  "package": "react",
+  "version": "18.2.0",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "React is MIT — permissive, no obligations"
+}

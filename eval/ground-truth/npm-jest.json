@@ -1,0 +1,12 @@
+{
+  "package": "jest",
+  "version": "29.7.0",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "expected": {
+    "classification": "test_only",
+    "usageTypes": ["test_only"],
+    "triggersObligations": false
+  },
+  "notes": "Jest is a testing framework — should be classified as test_only"
+}

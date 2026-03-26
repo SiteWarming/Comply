@@ -1,0 +1,12 @@
+{
+  "package": "pytest",
+  "version": "8.0.0",
+  "ecosystem": "python",
+  "license": "MIT",
+  "expected": {
+    "classification": "test_only",
+    "usageTypes": ["test_only"],
+    "triggersObligations": false
+  },
+  "notes": "pytest is a testing framework — should be classified as test_only"
+}

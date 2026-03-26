@@ -1,0 +1,12 @@
+{
+  "package": "eslint",
+  "version": "9.0.0",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "expected": {
+    "classification": "dev_only",
+    "usageTypes": ["dev_only"],
+    "triggersObligations": false
+  },
+  "notes": "ESLint is a linter — should be classified as dev_only"
+}

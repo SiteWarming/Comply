@@ -1,0 +1,12 @@
+{
+  "package": "webpack",
+  "version": "5.90.0",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "expected": {
+    "classification": "build_tool",
+    "usageTypes": ["build_tool"],
+    "triggersObligations": false
+  },
+  "notes": "Webpack is a bundler/build tool — runs at build time, output does not contain webpack itself"
+}

@@ -1,0 +1,13 @@
+{
+  "package": "readline-sync",
+  "version": "1.4.10",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "distributionModel": "cli",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "readline-sync is MIT — no obligations even in distributed CLI tools"
+}

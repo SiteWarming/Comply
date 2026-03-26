@@ -1,0 +1,13 @@
+{
+  "package": "ghostscript4js",
+  "version": "3.2.1",
+  "ecosystem": "npm",
+  "license": "GPL-3.0",
+  "distributionModel": "distributed",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": true
+  },
+  "notes": "GPL-3.0 DOES trigger when software is distributed to end users"
+}

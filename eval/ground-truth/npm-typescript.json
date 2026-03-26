@@ -1,0 +1,12 @@
+{
+  "package": "typescript",
+  "version": "5.6.0",
+  "ecosystem": "npm",
+  "license": "Apache-2.0",
+  "expected": {
+    "classification": "build_tool",
+    "usageTypes": ["build_tool"],
+    "triggersObligations": false
+  },
+  "notes": "TypeScript compiler is a build tool — never ships in production bundles"
+}

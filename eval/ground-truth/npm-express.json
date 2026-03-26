@@ -1,0 +1,12 @@
+{
+  "package": "express",
+  "version": "4.18.0",
+  "ecosystem": "npm",
+  "license": "MIT",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "Express is MIT — no obligations regardless of distribution model"
+}

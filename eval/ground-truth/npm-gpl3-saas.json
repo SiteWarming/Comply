@@ -1,0 +1,13 @@
+{
+  "package": "ghostscript4js",
+  "version": "3.2.1",
+  "ecosystem": "npm",
+  "license": "GPL-3.0",
+  "distributionModel": "saas",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "GPL-3.0 does NOT trigger for SaaS (not distributed). Only AGPL triggers for network use."
+}

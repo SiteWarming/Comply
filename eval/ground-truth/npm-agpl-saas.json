@@ -1,0 +1,13 @@
+{
+  "package": "mongo-express",
+  "version": "1.0.0",
+  "ecosystem": "npm",
+  "license": "AGPL-3.0",
+  "distributionModel": "saas",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": true
+  },
+  "notes": "AGPL-3.0 DOES trigger for SaaS — network copyleft requires source disclosure for network-accessible services"
+}

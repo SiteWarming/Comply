@@ -1,0 +1,13 @@
+{
+  "package": "mongodb",
+  "version": "6.0.0",
+  "ecosystem": "npm",
+  "license": "Apache-2.0",
+  "distributionModel": "saas",
+  "expected": {
+    "classification": "runtime",
+    "usageTypes": ["import"],
+    "triggersObligations": false
+  },
+  "notes": "MongoDB Node driver is Apache-2.0 (the server is SSPL, but the driver is permissive). No obligations."
+}
