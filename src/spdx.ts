@@ -42,8 +42,10 @@ const LICENSE_DB: Record<string, LicenseEntry> = {
   'lgpl-2.0-only': { name: 'LGPL 2.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'lgpl-2.1-only': { name: 'LGPL 2.1', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'lgpl-2.1': { name: 'LGPL 2.1', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
+  'lgpl-2.1-or-later': { name: 'LGPL 2.1+', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'lgpl-3.0-only': { name: 'LGPL 3.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'lgpl-3.0': { name: 'LGPL 3.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
+  'lgpl-3.0-or-later': { name: 'LGPL 3.0+', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'epl-1.0': { name: 'Eclipse Public License 1.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'epl-2.0': { name: 'Eclipse Public License 2.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
   'cpl-1.0': { name: 'Common Public License 1.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: false },
@@ -65,7 +67,10 @@ const LICENSE_DB: Record<string, LicenseEntry> = {
   'agpl-3.0-or-later': { name: 'AGPL 3.0+', tier: 'network_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: true },
   'sspl-1.0': { name: 'Server Side Public License 1.0', tier: 'network_copyleft', requiresAttribution: true, requiresSourceDisclosure: true, copyleft: true, networkCopyleft: true },
 
-  // --- Non-Commercial ---
+  // --- Creative Commons ---
+  'cc-by-4.0': { name: 'CC BY 4.0', tier: 'permissive', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: false, networkCopyleft: false },
+  'cc-by-3.0': { name: 'CC BY 3.0', tier: 'permissive', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: false, networkCopyleft: false },
+  'cc-by-sa-4.0': { name: 'CC BY-SA 4.0', tier: 'weak_copyleft', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: true, networkCopyleft: false },
   'cc-by-nc-4.0': { name: 'CC BY-NC 4.0', tier: 'non_commercial', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: false, networkCopyleft: false },
   'cc-by-nc-sa-4.0': { name: 'CC BY-NC-SA 4.0', tier: 'non_commercial', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: true, networkCopyleft: false },
   'cc-by-nc-nd-4.0': { name: 'CC BY-NC-ND 4.0', tier: 'non_commercial', requiresAttribution: true, requiresSourceDisclosure: false, copyleft: false, networkCopyleft: false },
@@ -103,8 +108,14 @@ const LICENSE_ALIASES: Record<string, string> = {
   'mplv2': 'mpl-2.0',
   'epl': 'epl-2.0',
   'cc0': 'cc0-1.0',
+  'cc-by': 'cc-by-4.0',
   'public domain': 'unlicense',
   'boost': 'bsl-1.0',
+  'mit/x11': 'mit',
+  'x11/mit': 'mit',
+  'python-2.0': 'python-2.0',
+  'python': 'python-2.0',
+  'psf-2.0': 'python-2.0',
 };
 
 /**
@@ -116,7 +127,40 @@ export function classifyLicense(rawLicense: string): LicenseInfo {
     return makeUnknown('No license specified');
   }
 
-  const normalized = rawLicense.trim().toLowerCase();
+  const trimmed = rawLicense.trim();
+  const normalized = trimmed.toLowerCase();
+
+  // Skip non-license markers
+  if (isNonLicense(normalized)) {
+    return makeUnknown(trimmed);
+  }
+
+  // Strip outer parentheses first so "(CC-BY-4.0 AND MIT)" → "CC-BY-4.0 AND MIT"
+  if (normalized.startsWith('(') && normalized.endsWith(')')) {
+    return classifyLicense(trimmed.slice(1, -1));
+  }
+
+  // Handle SPDX expressions BEFORE single-license lookup — these contain spaces
+  // that would otherwise not match the DB
+  if (normalized.includes(' or ') || normalized.includes(' and ')) {
+    return classifySpdxExpression(trimmed);
+  }
+
+  // Handle "/" as OR (e.g., "MIT/X11", "Apache-2.0/MIT")
+  if (normalized.includes('/')) {
+    // Check alias first (e.g., "MIT/X11" is a known alias)
+    if (LICENSE_ALIASES[normalized]) {
+      const spdxId = LICENSE_ALIASES[normalized];
+      if (LICENSE_DB[spdxId]) {
+        return toLicenseInfo(spdxId, LICENSE_DB[spdxId]);
+      }
+    }
+    // Otherwise treat as OR expression
+    const parts = trimmed.split('/').map(p => p.trim()).filter(Boolean);
+    if (parts.length > 1) {
+      return classifySpdxExpression(parts.join(' OR '));
+    }
+  }
 
   // Direct SPDX lookup
   if (LICENSE_DB[normalized]) {
@@ -147,31 +191,33 @@ export function classifyLicense(rawLicense: string): LicenseInfo {
     }
   }
 
-  // Handle SPDX expressions (e.g., "MIT OR Apache-2.0", "(MIT AND BSD-2-Clause)")
-  if (normalized.includes(' or ') || normalized.includes(' and ')) {
-    return classifySpdxExpression(rawLicense);
-  }
+  return makeUnknown(trimmed);
+}
 
-  // Handle parenthesized expressions
-  if (normalized.startsWith('(') && normalized.endsWith(')')) {
-    return classifyLicense(rawLicense.slice(1, -1));
-  }
-
-  return makeUnknown(rawLicense);
+/**
+ * Detect non-license strings that registries sometimes return.
+ */
+function isNonLicense(normalized: string): boolean {
+  return normalized === 'none' ||
+    normalized === 'unlicensed' ||
+    normalized.startsWith('see license in ') ||
+    (normalized.startsWith('see ') && normalized.includes('license')) ||
+    normalized === 'custom' ||
+    normalized === 'proprietary';
 }
 
 function classifySpdxExpression(expression: string): LicenseInfo {
   const normalized = expression.toLowerCase();
+  const tierOrder: LicenseTier[] = ['permissive', 'weak_copyleft', 'strong_copyleft', 'network_copyleft', 'non_commercial', 'proprietary', 'unknown'];
 
   // OR expressions: take the most permissive option
   if (normalized.includes(' or ')) {
     const parts = normalized.split(/\s+or\s+/).map(p => p.replace(/[()]/g, '').trim());
     const classified = parts.map(p => classifyLicense(p));
-    // Sort by permissiveness (permissive first)
-    const tierOrder: LicenseTier[] = ['permissive', 'weak_copyleft', 'strong_copyleft', 'network_copyleft', 'non_commercial', 'proprietary', 'unknown'];
-    classified.sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
-    // Return the most permissive with a note
-    const best = classified[0];
+    const known = classified.filter(c => c.tier !== 'unknown');
+    const pool = known.length > 0 ? known : classified;
+    pool.sort((a, b) => tierOrder.indexOf(a.tier) - tierOrder.indexOf(b.tier));
+    const best = pool[0];
     return {
       ...best,
       spdxId: expression,
@@ -179,17 +225,29 @@ function classifySpdxExpression(expression: string): LicenseInfo {
     };
   }
 
-  // AND expressions: take the most restrictive
+  // AND expressions: take the most restrictive (ignoring unknown components)
   if (normalized.includes(' and ')) {
     const parts = normalized.split(/\s+and\s+/).map(p => p.replace(/[()]/g, '').trim());
     const classified = parts.map(p => classifyLicense(p));
-    const tierOrder: LicenseTier[] = ['permissive', 'weak_copyleft', 'strong_copyleft', 'network_copyleft', 'non_commercial', 'proprietary', 'unknown'];
-    classified.sort((a, b) => tierOrder.indexOf(b.tier) - tierOrder.indexOf(a.tier));
-    const worst = classified[0];
+    const known = classified.filter(c => c.tier !== 'unknown');
+    if (known.length === 0) {
+      return makeUnknown(expression);
+    }
+    known.sort((a, b) => tierOrder.indexOf(b.tier) - tierOrder.indexOf(a.tier));
+    const worst = known[0];
+    // Merge obligations from all known components
+    const requiresAttribution = known.some(c => c.requiresAttribution);
+    const requiresSourceDisclosure = known.some(c => c.requiresSourceDisclosure);
+    const copyleft = known.some(c => c.copyleft);
+    const networkCopyleft = known.some(c => c.networkCopyleft);
     return {
-      ...worst,
       spdxId: expression,
       name: `${expression} (most restrictive: ${worst.name})`,
+      tier: worst.tier,
+      requiresAttribution,
+      requiresSourceDisclosure,
+      copyleft,
+      networkCopyleft,
     };
   }
 
