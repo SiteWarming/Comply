@@ -10,6 +10,8 @@
 
 import type { Dependency, Ecosystem } from '../types.js';
 
+const USER_AGENT = 'comply-oss/1.0 (https://github.com/SiteWarming/Comply)';
+
 export interface DependencyHealth {
   name: string;
   version: string;
@@ -64,6 +66,10 @@ async function checkSingleHealth(dep: Dependency, verbose?: boolean): Promise<De
       return checkNpmHealth(dep);
     case 'python':
       return checkPyPIHealth(dep);
+    case 'rust':
+      return checkCratesIOHealth(dep);
+    case 'go':
+      return checkGoHealth(dep);
     default:
       return makeUnknownHealth(dep);
   }
@@ -181,6 +187,112 @@ async function checkPyPIHealth(dep: Dependency): Promise<DependencyHealth> {
       maintenanceRisk: classifyMaintenanceRisk(daysSinceLastPublish, isDeprecated),
       latestLicense,
       licenseChanged: false, // Would need per-version license data
+    };
+  } catch {
+    return makeUnknownHealth(dep);
+  }
+}
+
+async function checkCratesIOHealth(dep: Dependency): Promise<DependencyHealth> {
+  try {
+    const response = await fetch(
+      `https://crates.io/api/v1/crates/${encodeURIComponent(dep.name)}`,
+      { headers: { Accept: 'application/json', 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(10000) }
+    );
+
+    if (!response.ok) return makeUnknownHealth(dep);
+
+    const data = await response.json() as any;
+    const crate = data.crate ?? {};
+    const versions: any[] = data.versions ?? [];
+
+    const latestVersion = crate.max_version ?? null;
+    const updatedAt = crate.updated_at ?? null;
+
+    // Find the installed version's metadata
+    const installedVer = versions.find((v: any) => v.num === dep.version);
+    const publishedAt = installedVer?.created_at ?? null;
+    const isYanked = installedVer?.yanked ?? false;
+
+    // Latest version metadata
+    const latestVer = versions.find((v: any) => v.num === latestVersion);
+    const latestPublishedAt = latestVer?.created_at ?? updatedAt;
+    const latestLicense = latestVer?.license ?? crate.license ?? null;
+
+    const installedLicense = installedVer?.license ?? crate.license ?? null;
+    const licenseChanged = !!(latestLicense && installedLicense &&
+      latestLicense.toLowerCase() !== installedLicense.toLowerCase());
+
+    const daysSinceLastPublish = latestPublishedAt
+      ? Math.floor((Date.now() - new Date(latestPublishedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    return {
+      name: dep.name,
+      version: dep.version,
+      ecosystem: dep.ecosystem,
+      publishedAt,
+      latestPublishedAt,
+      latestVersion,
+      isLatest: dep.version === latestVersion,
+      isDeprecated: isYanked,
+      deprecationMessage: isYanked ? 'Version has been yanked from crates.io' : null,
+      daysSinceLastPublish,
+      maintenanceRisk: classifyMaintenanceRisk(daysSinceLastPublish, isYanked),
+      latestLicense,
+      licenseChanged,
+    };
+  } catch {
+    return makeUnknownHealth(dep);
+  }
+}
+
+async function checkGoHealth(dep: Dependency): Promise<DependencyHealth> {
+  try {
+    const encoded = encodeURIComponent(dep.name);
+
+    // Use deps.dev for version info and license
+    const response = await fetch(
+      `https://api.deps.dev/v3alpha/systems/go/packages/${encoded}`,
+      { headers: { Accept: 'application/json', 'User-Agent': USER_AGENT }, signal: AbortSignal.timeout(10000) }
+    );
+
+    if (!response.ok) return makeUnknownHealth(dep);
+
+    const data = await response.json() as any;
+    const versions: any[] = data.versions ?? [];
+
+    // deps.dev returns versions sorted, latest last
+    const latestVerData = versions[versions.length - 1];
+    const latestVersion = latestVerData?.versionKey?.version ?? null;
+
+    // Find installed version
+    const installedVerData = versions.find((v: any) => v.versionKey?.version === dep.version);
+
+    const publishedAt = installedVerData?.publishedAt ?? null;
+    const latestPublishedAt = latestVerData?.publishedAt ?? null;
+
+    const daysSinceLastPublish = latestPublishedAt
+      ? Math.floor((Date.now() - new Date(latestPublishedAt).getTime()) / (1000 * 60 * 60 * 24))
+      : null;
+
+    // Go modules can be retracted but this isn't reliably exposed
+    const isDeprecated = installedVerData?.isDefault === false && !!installedVerData?.isRetracted;
+
+    return {
+      name: dep.name,
+      version: dep.version,
+      ecosystem: dep.ecosystem,
+      publishedAt,
+      latestPublishedAt,
+      latestVersion,
+      isLatest: dep.version === latestVersion,
+      isDeprecated,
+      deprecationMessage: isDeprecated ? 'Version has been retracted' : null,
+      daysSinceLastPublish,
+      maintenanceRisk: classifyMaintenanceRisk(daysSinceLastPublish, isDeprecated),
+      latestLicense: null, // deps.dev package-level endpoint doesn't return per-version licenses
+      licenseChanged: false,
     };
   } catch {
     return makeUnknownHealth(dep);

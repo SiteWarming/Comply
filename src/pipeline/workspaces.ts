@@ -95,9 +95,9 @@ export function scopeDependenciesToWorkspaces(
   for (const workspace of workspaceConfig.workspaces) {
     const workspaceManifestPaths = new Set(workspace.manifests.map(m => m.path));
 
-    workspace.dependencies = allDependencies.filter(dep =>
-      workspaceManifestPaths.has(dep.source)
-    );
+    workspace.dependencies = allDependencies
+      .filter(dep => workspaceManifestPaths.has(dep.source))
+      .map(dep => ({ ...dep, workspace: workspace.name }));
   }
 
   // Any deps not claimed by a workspace go to root
@@ -107,11 +107,38 @@ export function scopeDependenciesToWorkspaces(
 
   const rootWorkspace = workspaceConfig.workspaces.find(w => w.isRoot);
   if (rootWorkspace) {
-    const unclaimed = allDependencies.filter(d => !claimedDeps.has(`${d.name}@${d.version}`));
+    const unclaimed = allDependencies
+      .filter(d => !claimedDeps.has(`${d.name}@${d.version}`))
+      .map(d => ({ ...d, workspace: rootWorkspace.name }));
     rootWorkspace.dependencies.push(...unclaimed);
   }
 
   return workspaceConfig;
+}
+
+/**
+ * Apply distribution model overrides from policy to workspaces.
+ * Override keys match against workspace relativePath or name.
+ */
+export function applyDistributionOverrides(
+  config: WorkspaceConfig,
+  overrides: Record<string, DistributionModel>
+): void {
+  if (!config.isMonorepo || !overrides) return;
+
+  for (const workspace of config.workspaces) {
+    // Normalize for matching: strip leading ./ and trailing /
+    const normalizedPath = workspace.relativePath.replace(/^\.\//, '').replace(/\/$/, '');
+
+    for (const [key, model] of Object.entries(overrides)) {
+      const normalizedKey = key.replace(/^\.\//, '').replace(/\/$/, '');
+
+      if (normalizedKey === normalizedPath || normalizedKey === workspace.name) {
+        workspace.distributionModel = model;
+        break;
+      }
+    }
+  }
 }
 
 /**

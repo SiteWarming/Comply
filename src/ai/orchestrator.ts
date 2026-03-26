@@ -17,7 +17,7 @@ export interface OrchestratorConfig {
   provider: AIProvider;
   repoPath: string;
   auditDir: string;
-  distributionModel: DistributionModel;
+  distributionModel: DistributionModel | ((dep: Dependency) => DistributionModel);
   tierCeiling: ModelTier;
   promptsDir?: string;
   cacheTtlDays?: number;
@@ -45,6 +45,16 @@ const TIER_ORDER: Record<ModelTier, number> = { free: 0, mid: 1, premium: 2 };
 
 function tierAllowed(required: ModelTier, ceiling: ModelTier): boolean {
   return TIER_ORDER[required] <= TIER_ORDER[ceiling];
+}
+
+function resolveDistModel(
+  config: OrchestratorConfig,
+  dep: Dependency
+): DistributionModel {
+  if (typeof config.distributionModel === 'function') {
+    return config.distributionModel(dep);
+  }
+  return config.distributionModel;
 }
 
 /**
@@ -120,13 +130,17 @@ export async function runAIOrchestrator(
   }
 
   // ---- Stage 5: Remediation Advisor (mid tier) ----
+  // Run for non-compliant, needs-review, and packages where obligations are triggered.
+  // needs_review packages benefit from AI suggestions (alternative packages, license clarification).
   if (tierAllowed('mid', config.tierCeiling)) {
-    const nonCompliant = toAnalyze.filter(e => {
+    const needsRemediation = toAnalyze.filter(e => {
       const acc = results.get(depKey(e.dependency));
-      return acc?.triggersObligations === true || e.status === 'non_compliant';
+      return acc?.triggersObligations === true ||
+        e.status === 'non_compliant' ||
+        e.status === 'needs_review';
     });
 
-    await runRemediationStage(nonCompliant, agents.remediationAdvisor, cache, config, results, callbacks);
+    await runRemediationStage(needsRemediation, agents.remediationAdvisor, cache, config, results, callbacks);
   }
 
   // ---- Apply results back to evaluations ----
@@ -236,7 +250,7 @@ async function runUsageAnalyzerStage(
         licenseId: evaluation.license.license.spdxId || evaluation.license.rawLicense,
         licenseTier: evaluation.license.license.tier,
         codeSnippets: snippets.join('\n\n') || 'No code usage found.',
-        distributionModel: config.distributionModel,
+        distributionModel: resolveDistModel(config, dep),
       };
 
       const result = await agent.execute(context);
@@ -295,7 +309,7 @@ async function runObligationStage(
         licenseTier: evaluation.license.license.tier,
         usageTypes: acc.usageAnalysis.usageTypes.join(', '),
         isModified: String(acc.usageAnalysis.isModified),
-        distributionModel: config.distributionModel,
+        distributionModel: resolveDistModel(config, dep),
       };
 
       const result = await agent.execute(context);
@@ -337,9 +351,13 @@ async function runConflictStage(
       `- ${e.dependency.name}@${e.dependency.version} (${e.license.license.spdxId || e.license.rawLicense})`
     ).join('\n');
 
+    // Conflict detection is cross-project; use the first dep's model or fallback to string value
+    const fallbackModel = typeof config.distributionModel === 'function'
+      ? (copyleftEvals[0] ? config.distributionModel(copyleftEvals[0].dependency) : 'saas')
+      : config.distributionModel;
     const context: ConflictDetectorContext = {
       packages: packagesDesc,
-      distributionModel: config.distributionModel,
+      distributionModel: fallbackModel,
     };
 
     await agent.execute(context);

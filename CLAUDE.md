@@ -47,9 +47,9 @@ npx tsx src/cli/index.ts scan test/fixtures/sample-npm --verbose
 1. **Discovery** (`pipeline/discovery.ts`) — Walk repo tree matching `MANIFEST_PATTERNS` array (package.json, requirements.txt, go.mod, Cargo.toml, etc.)
 2. **Workspace Detection** (`pipeline/workspaces.ts`) — Detect monorepo tools (npm, pnpm, lerna, nx, turborepo)
 3. **Extraction** (`pipeline/extraction.ts`) — Parse manifest/lock files into `Dependency[]`
-4. **Resolution** (`pipeline/resolution.ts`) — Hit npm/PyPI registries for license info, batched 10 at a time with 30-day file cache under `.comply/cache/licenses/`
-5. **Health** (`pipeline/health.ts`) — Check age, deprecation, license drift between pinned and latest versions
-6. **Evaluation** (`pipeline/policy.ts`) — Apply YAML policy rules (allow/deny/allow_if/review) per license
+4. **Resolution** (`pipeline/resolution.ts`) — Hit npm/PyPI/crates.io/deps.dev registries for license info, batched 10 at a time with 30-day file cache under `.comply/cache/licenses/`. Go modules use deps.dev (primary) with GitHub license API fallback.
+5. **Health** (`pipeline/health.ts`) — Check age, deprecation, license drift between pinned and latest versions (npm, PyPI, crates.io, deps.dev)
+6. **Evaluation** (`pipeline/policy.ts`) — Apply YAML policy rules (allow/deny/allow_if/review) per license. Supports per-workspace distribution model overrides for monorepos.
 7. **AI Analysis** (`ai/orchestrator.ts`) — Optional (`--ai`). Multi-agent pipeline: Classifier → Usage Analyzer → Obligation Reasoner → Conflict Detector → Remediation Advisor
 8. **Reporting** (`output/reporting.ts` + `output/executive-summary.ts`) — Generate Markdown + JSON reports
 9. **Drift** (`state/state.ts`) — Compare against previous snapshot, compute diff

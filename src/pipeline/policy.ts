@@ -95,10 +95,12 @@ export function getDefaultPolicy(): Policy {
 export function evaluateLicense(
   resolved: ResolvedLicense,
   policy: Policy,
-  usageAnalysis?: UsageAnalysis
+  usageAnalysis?: UsageAnalysis,
+  distributionModel?: DistributionModel
 ): PolicyEvaluation {
   const dep = resolved.dependency;
   const license = resolved.license;
+  const effectiveModel = distributionModel ?? policy.distributionModel.default;
 
   // Check allowlist
   if (policy.allowlist?.includes(dep.name)) {
@@ -110,12 +112,13 @@ export function evaluateLicense(
       severity: 'none',
       reason: `Package ${dep.name} is explicitly allowlisted`,
       matchedRule: 'allowlist',
+      effectiveDistributionModel: effectiveModel,
     };
   }
 
   // Dev dependencies in SaaS/internal models don't trigger obligations
   // (they are never distributed), except for network copyleft (AGPL)
-  const distModel = policy.distributionModel.default;
+  const distModel = effectiveModel;
   if (dep.isDev && (distModel === 'saas' || distModel === 'internal') && license.tier !== 'network_copyleft') {
     return {
       dependency: dep,
@@ -125,6 +128,7 @@ export function evaluateLicense(
       severity: 'none',
       reason: `Dev dependency in ${distModel} context — license obligations do not apply (no distribution)`,
       matchedRule: 'dev_dependency',
+      effectiveDistributionModel: effectiveModel,
     };
   }
 
@@ -138,6 +142,7 @@ export function evaluateLicense(
       severity: 'critical',
       reason: `Package ${dep.name} is explicitly denylisted`,
       matchedRule: 'denylist',
+      effectiveDistributionModel: effectiveModel,
       remediation: [{
         action: 'remove',
         description: `Remove ${dep.name} and find an alternative. This package is on the organization deny list.`,
@@ -186,6 +191,7 @@ export function evaluateLicense(
       severity: 'medium',
       reason,
       matchedRule: 'unknown_license',
+      effectiveDistributionModel: effectiveModel,
       remediation,
     };
   }
@@ -202,6 +208,7 @@ export function evaluateLicense(
       severity: 'medium',
       reason: `No policy rule matches license ${license.spdxId}`,
       matchedRule: 'no_match',
+      effectiveDistributionModel: effectiveModel,
     };
   }
 
@@ -218,6 +225,7 @@ export function evaluateLicense(
         severity,
         reason: `License ${license.spdxId} is allowed under rule "${matchedRuleName}"`,
         matchedRule: matchedRuleName,
+        effectiveDistributionModel: effectiveModel,
         remediation: license.requiresAttribution ? [{
           action: 'add_notice',
           description: `Ensure ${license.spdxId} attribution notice is included in your NOTICES or LICENSE file`,
@@ -226,7 +234,7 @@ export function evaluateLicense(
       };
 
     case 'allow_if':
-      return evaluateConditional(dep, resolved, rule, matchedRuleName, severity, policy, usageAnalysis);
+      return evaluateConditional(dep, resolved, rule, matchedRuleName, severity, policy, usageAnalysis, effectiveModel);
 
     case 'deny':
       return {
@@ -237,6 +245,7 @@ export function evaluateLicense(
         severity,
         reason: rule.reason || `License ${license.spdxId} is denied under rule "${matchedRuleName}"`,
         matchedRule: matchedRuleName,
+        effectiveDistributionModel: effectiveModel,
         remediation: generateDenyRemediation(dep, license.spdxId),
       };
 
@@ -249,6 +258,7 @@ export function evaluateLicense(
         severity,
         reason: `License ${license.spdxId} requires manual review under rule "${matchedRuleName}"`,
         matchedRule: matchedRuleName,
+        effectiveDistributionModel: effectiveModel,
         remediation: [{
           action: 'seek_approval',
           description: `Get legal/compliance team approval for use of ${dep.name} under ${license.spdxId}`,
@@ -265,6 +275,7 @@ export function evaluateLicense(
         severity: 'medium',
         reason: `Unrecognized policy action: ${rule.action}`,
         matchedRule: matchedRuleName,
+        effectiveDistributionModel: effectiveModel,
       };
   }
 }
@@ -276,8 +287,10 @@ function evaluateConditional(
   ruleName: string,
   severity: Severity,
   policy: Policy,
-  usageAnalysis?: UsageAnalysis
+  usageAnalysis?: UsageAnalysis,
+  distributionModel?: DistributionModel
 ): PolicyEvaluation {
+  const effectiveModel = distributionModel ?? policy.distributionModel.default;
   const conditions = rule.conditions || [];
   const spdxId = resolved.license.spdxId;
 
@@ -300,6 +313,7 @@ function evaluateConditional(
       severity,
       reason: `License ${spdxId} is conditionally allowed under rule "${ruleName}". Conditions: ${conditions.join(', ')}.${contextHint}`,
       matchedRule: ruleName,
+      effectiveDistributionModel: effectiveModel,
       remediation: [{
         action: 'seek_approval',
         description: isNpmDynamic
@@ -316,7 +330,7 @@ function evaluateConditional(
   for (const condition of conditions) {
     switch (condition) {
       case 'internal_use_only':
-        if (policy.distributionModel.default !== 'internal' && usageAnalysis.triggersObligations) {
+        if (effectiveModel !== 'internal' && usageAnalysis.triggersObligations) {
           failedConditions.push('internal_use_only');
         }
         break;
@@ -342,6 +356,7 @@ function evaluateConditional(
       severity: 'none',
       reason: `License ${spdxId} conditions are met: ${conditions.join(', ')}`,
       matchedRule: ruleName,
+      effectiveDistributionModel: effectiveModel,
     };
   }
 
@@ -353,6 +368,7 @@ function evaluateConditional(
     severity,
     reason: `License ${spdxId} conditions not met: ${failedConditions.join(', ')}`,
     matchedRule: ruleName,
+    effectiveDistributionModel: effectiveModel,
     remediation: failedConditions.map(c => conditionToRemediation(c, dep, spdxId!)),
   };
 }

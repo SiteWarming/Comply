@@ -21,6 +21,8 @@ export interface Dependency {
   isDev?: boolean;
   /** The manifest file that declared this dependency */
   source: string;
+  /** Workspace this dependency belongs to (monorepo only) */
+  workspace?: string;
 }
 
 // --- License Types ---
@@ -118,6 +120,8 @@ export interface PolicyEvaluation {
   matchedRule: string;
   /** Remediation steps if non-compliant */
   remediation?: RemediationStep[];
+  /** Distribution model used for this evaluation (monorepo: may vary per workspace) */
+  effectiveDistributionModel?: DistributionModel;
 }
 
 export interface RemediationStep {

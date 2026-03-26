@@ -14,9 +14,9 @@ import { loadPolicy, evaluateLicense } from './policy.js';
 import { buildReport, renderMarkdownReport, saveReport } from '../output/reporting.js';
 import { generateNoticesFile, saveNoticesFile } from '../output/notices.js';
 import { checkDependencyHealth, renderHealthSection } from './health.js';
-import { detectWorkspaces, scopeDependenciesToWorkspaces, renderWorkspaceSection } from './workspaces.js';
+import { detectWorkspaces, scopeDependenciesToWorkspaces, applyDistributionOverrides, renderWorkspaceSection } from './workspaces.js';
 import { createSnapshot, saveSnapshot, loadLatestSnapshot, computeDiff, saveDiff } from '../state/state.js';
-import type { ComplyConfig, PolicyEvaluation, Ecosystem, SnapshotDiff } from '../types.js';
+import type { ComplyConfig, PolicyEvaluation, Ecosystem, SnapshotDiff, Dependency, DistributionModel } from '../types.js';
 import type { DependencyHealth } from './health.js';
 import type { WorkspaceConfig } from './workspaces.js';
 
@@ -149,7 +149,42 @@ export async function runPipeline(
   callbacks?.onPhase?.('evaluation', 'Evaluating against policy...');
 
   const policy = await loadPolicy(config.policyPath);
-  let evaluations: PolicyEvaluation[] = licenses.map(l => evaluateLicense(l, policy));
+
+  // Apply per-workspace distribution model overrides
+  applyDistributionOverrides(workspaceConfig, policy.distributionModel.overrides ?? {});
+
+  // Build workspace→distribution model lookup for per-dep evaluation
+  const wsDistModels = new Map<string, DistributionModel>();
+  for (const ws of workspaceConfig.workspaces) {
+    if (ws.distributionModel) {
+      wsDistModels.set(ws.name, ws.distributionModel);
+    }
+  }
+
+  // Propagate workspace stamps from scoped deps to resolved licenses
+  // (scoping creates new objects, but resolution used the original deps)
+  if (workspaceConfig.isMonorepo) {
+    const wsLookup = new Map<string, string>();
+    for (const ws of workspaceConfig.workspaces) {
+      for (const d of ws.dependencies) {
+        wsLookup.set(`${d.name}@${d.version}@${d.source}`, ws.name);
+      }
+    }
+    for (const l of licenses) {
+      const key = `${l.dependency.name}@${l.dependency.version}@${l.dependency.source}`;
+      const wsName = wsLookup.get(key);
+      if (wsName) {
+        l.dependency.workspace = wsName;
+      }
+    }
+  }
+
+  const getDistModel = (dep: Dependency): DistributionModel | undefined =>
+    dep.workspace ? wsDistModels.get(dep.workspace) : undefined;
+
+  let evaluations: PolicyEvaluation[] = licenses.map(l =>
+    evaluateLicense(l, policy, undefined, getDistModel(l.dependency))
+  );
 
   // ---- Phase 5: AI Usage Analysis (optional) ----
   if (config.enableAIAnalysis) {
@@ -172,7 +207,9 @@ export async function runPipeline(
         provider,
         repoPath: config.repoPath,
         auditDir: config.auditDir,
-        distributionModel: policy.distributionModel.default,
+        distributionModel: wsDistModels.size > 0
+          ? (dep: Dependency) => (dep.workspace ? wsDistModels.get(dep.workspace) : undefined) ?? policy.distributionModel.default
+          : policy.distributionModel.default,
         tierCeiling: config.aiTier === 'budget' ? 'free' : config.aiTier === 'premium' ? 'premium' : 'mid',
         analysisLimit: config.aiAnalysisLimit || 20,
         verbose: config.verbose,
@@ -214,8 +251,8 @@ export async function runPipeline(
     );
   }
 
-  // Build the full markdown with all sections
-  let markdown = renderMarkdownReport(report, diff);
+  // Build the full markdown with all sections (health data drives remediation plan)
+  let markdown = renderMarkdownReport(report, diff, healthData);
 
   // Inject workspace section after executive summary
   if (workspaceConfig.isMonorepo) {

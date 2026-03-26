@@ -7,6 +7,8 @@ import { join, dirname } from 'node:path';
 import { classifyLicense } from '../state/spdx.js';
 import type { Dependency, ResolvedLicense } from '../types.js';
 
+const USER_AGENT = 'comply-oss/1.0 (https://github.com/SiteWarming/Comply)';
+
 interface CacheEntry {
   license: string;
   resolvedAt: string;
@@ -72,6 +74,20 @@ async function resolveSingleLicense(
         const result = await resolveFromPyPI(dep.name);
         rawLicense = result.license;
         resolvedVia = 'registry';
+        confidence = result.confidence;
+        break;
+      }
+      case 'rust': {
+        const result = await resolveFromCratesIO(dep.name);
+        rawLicense = result.license;
+        resolvedVia = 'registry';
+        confidence = result.confidence;
+        break;
+      }
+      case 'go': {
+        const result = await resolveFromGo(dep.name, dep.version);
+        rawLicense = result.license;
+        resolvedVia = result.via;
         confidence = result.confidence;
         break;
       }
@@ -199,6 +215,102 @@ async function resolveFromPyPI(name: string): Promise<{ license: string; confide
   }
 
   return { license: '', confidence: 0 };
+}
+
+// ---- crates.io Registry (Rust) ----
+
+async function resolveFromCratesIO(name: string): Promise<{ license: string; confidence: number }> {
+  try {
+    const response = await fetch(`https://crates.io/api/v1/crates/${encodeURIComponent(name)}`, {
+      headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!response.ok) return { license: '', confidence: 0 };
+
+    const data = await response.json() as any;
+
+    // Crate-level license (SPDX expression, e.g. "MIT OR Apache-2.0")
+    const license = data.crate?.license ?? '';
+    if (license) {
+      return { license, confidence: 0.95 };
+    }
+
+    // Fallback: check latest version's license
+    if (data.versions?.length > 0) {
+      const latestLicense = data.versions[0].license ?? '';
+      if (latestLicense) {
+        return { license: latestLicense, confidence: 0.9 };
+      }
+    }
+  } catch {
+    // Network failure — degrade gracefully
+  }
+
+  return { license: '', confidence: 0 };
+}
+
+// ---- Go Module Resolution ----
+
+async function resolveFromGo(
+  modulePath: string,
+  version: string
+): Promise<{ license: string; confidence: number; via: ResolvedLicense['resolvedVia'] }> {
+  // Strategy A: deps.dev API (Google's open source insights)
+  try {
+    const encoded = encodeURIComponent(modulePath);
+    const versionUrl = version
+      ? `https://api.deps.dev/v3alpha/systems/go/packages/${encoded}/versions/${encodeURIComponent(version)}`
+      : `https://api.deps.dev/v3alpha/systems/go/packages/${encoded}`;
+
+    const response = await fetch(versionUrl, {
+      headers: { 'Accept': 'application/json', 'User-Agent': USER_AGENT },
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (response.ok) {
+      const data = await response.json() as any;
+      const licenses: string[] = data.licenses ?? [];
+      if (licenses.length > 0) {
+        return {
+          license: licenses.join(' AND '),
+          confidence: 0.9,
+          via: 'registry',
+        };
+      }
+    }
+  } catch {
+    // Fall through to GitHub
+  }
+
+  // Strategy B: GitHub license API (for github.com/* modules only)
+  if (modulePath.startsWith('github.com/')) {
+    try {
+      const parts = modulePath.split('/');
+      if (parts.length >= 3) {
+        // Strip major version suffix (e.g., github.com/foo/bar/v2 → foo/bar)
+        const owner = parts[1];
+        const repo = parts[2];
+
+        const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/license`, {
+          headers: { 'Accept': 'application/vnd.github.v3+json', 'User-Agent': USER_AGENT },
+          signal: AbortSignal.timeout(10000),
+        });
+
+        if (response.ok) {
+          const data = await response.json() as any;
+          const spdxId = data.license?.spdx_id;
+          if (spdxId && spdxId !== 'NOASSERTION') {
+            return { license: spdxId, confidence: 0.85, via: 'github' };
+          }
+        }
+      }
+    } catch {
+      // Network failure — degrade gracefully
+    }
+  }
+
+  return { license: '', confidence: 0, via: 'unknown' };
 }
 
 // ---- Cache Layer ----

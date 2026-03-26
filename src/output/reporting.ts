@@ -9,6 +9,8 @@ import type {
   AuditReport, PolicyEvaluation, ResolvedLicense, Dependency,
   Ecosystem, LicenseTier, ComplianceStatus, Severity, SnapshotDiff,
 } from '../types.js';
+import type { DependencyHealth } from '../pipeline/health.js';
+import { generateRemediationPlan, renderRemediationPlan } from './remediation-plan.js';
 
 /**
  * Build an AuditReport from evaluation results.
@@ -82,7 +84,7 @@ export function buildReport(
 /**
  * Render the report as Markdown.
  */
-export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff): string {
+export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff, healthData?: DependencyHealth[]): string {
   const lines: string[] = [];
   const s = report.summary;
   const m = report.metadata;
@@ -110,6 +112,14 @@ export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff): 
   lines.push('');
   lines.push(report.executiveSummary);
   lines.push('');
+
+  // Remediation Plan — prioritized action items
+  const plan = generateRemediationPlan(report.evaluations, healthData);
+  const planSection = renderRemediationPlan(plan);
+  if (planSection) {
+    lines.push(planSection);
+    lines.push('');
+  }
 
   // Summary table
   lines.push(`## Detailed Summary`);

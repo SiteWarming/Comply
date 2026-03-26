@@ -1,0 +1,24 @@
+version: 1
+
+distribution_model:
+  default: saas
+  overrides:
+    packages/cli: distributed
+    packages/api: internal
+
+license_rules:
+  permissive:
+    licenses: [MIT, BSD-2-Clause, BSD-3-Clause, Apache-2.0, ISC]
+    action: allow
+  weak_copyleft:
+    licenses: [LGPL-2.1, LGPL-3.0, MPL-2.0]
+    action: allow_if
+    conditions: [dynamic_linking_only]
+  strong_copyleft:
+    licenses: [GPL-2.0, GPL-3.0]
+    action: allow_if
+    conditions: [internal_use_only]
+  network_copyleft:
+    licenses: [AGPL-3.0]
+    action: deny
+    reason: Network copyleft requires source disclosure
