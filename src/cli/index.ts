@@ -98,6 +98,7 @@ program
             extraction: '📦',
             resolution: '🔑',
             health: '⚕️',
+            vulnerabilities: '🛡️',
             evaluation: '⚖️',
             analysis: '🤖',
             drift: '📊',
@@ -151,6 +152,7 @@ program
           ecosystems: result.ecosystems ?? [],
           evaluations: result.evaluations ?? [],
           healthData: result.healthData,
+          vulnData: result.vulnData,
           riskScore: result.summary.riskScore,
         });
 
@@ -181,6 +183,16 @@ program
       if (result.workspaceConfig) {
         console.log(`  📦 Monorepo (${result.workspaceConfig.tool}): ${result.workspaceConfig.workspaces.length} workspaces`);
         console.log('');
+      }
+
+      // Vulnerability highlights
+      if (result.vulnData) {
+        const vulnPkgs = result.vulnData.filter(v => v.totalCount > 0).length;
+        const totalCves = result.vulnData.reduce((sum, v) => sum + v.totalCount, 0);
+        if (totalCves > 0) {
+          console.log(`  🛡️  Vulnerabilities: ${totalCves} CVE(s) across ${vulnPkgs} package(s)`);
+          console.log('');
+        }
       }
 
       // Health highlights

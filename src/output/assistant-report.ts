@@ -14,6 +14,7 @@ import type {
   ComplianceStatus, Severity,
 } from '../types.js';
 import type { DependencyHealth } from '../pipeline/health.js';
+import type { DependencyVulnerabilities } from '../pipeline/vulnerabilities.js';
 import { findUsageLocations, extractCodeSnippets } from '../pipeline/analysis.js';
 
 export interface AssistantReport {
@@ -73,6 +74,12 @@ export interface FlaggedPackage {
     latestLicense?: string;
   };
 
+  vulnerabilities?: {
+    totalCount: number;
+    maxCvss: number;
+    cves: Array<{ id: string; cvss: number | null; summary: string }>;
+  };
+
   usage: {
     locations: string[];
     codeSnippets: CodeSnippet[];
@@ -96,10 +103,11 @@ export async function buildAssistantReport(opts: {
   ecosystems: Ecosystem[];
   evaluations: PolicyEvaluation[];
   healthData?: DependencyHealth[];
+  vulnData?: DependencyVulnerabilities[];
   riskScore: number;
   includeSnippets?: boolean;
 }): Promise<AssistantReport> {
-  const { evaluations, healthData, includeSnippets = true } = opts;
+  const { evaluations, healthData, vulnData, includeSnippets = true } = opts;
 
   const flaggedEvals = evaluations.filter(e =>
     e.status === 'non_compliant' ||
@@ -115,6 +123,9 @@ export async function buildAssistantReport(opts: {
 
     // Find health data for this package
     const health = healthData?.find(h => h.name === dep.name && h.version === dep.version);
+
+    // Find vulnerability data for this package
+    const vuln = vulnData?.find(v => v.name === dep.name && v.version === dep.version);
 
     // Gather usage context
     let locations: string[] = [];
@@ -163,6 +174,15 @@ export async function buildAssistantReport(opts: {
         licenseChanged: health.licenseChanged,
         latestLicense: health.latestLicense ?? undefined,
       } : undefined,
+      vulnerabilities: vuln && vuln.totalCount > 0 ? {
+        totalCount: vuln.totalCount,
+        maxCvss: vuln.maxCvss,
+        cves: vuln.vulnerabilities.slice(0, 10).map(v => ({
+          id: v.cveId ?? v.aliases[0] ?? 'Unknown',
+          cvss: v.cvssScore,
+          summary: v.summary,
+        })),
+      } : undefined,
       usage: {
         locations,
         codeSnippets: snippets,
@@ -208,7 +228,9 @@ function buildAnalysisPrompt(distributionModel: DistributionModel): string {
    - Internal: Almost nothing triggers.
    - Library: LGPL allows dynamic linking without copyleft.
 
-3. **Action Required**: For each package, recommend one of:
+3. **Vulnerability Assessment**: If the package has known CVEs, consider whether a fix version is available and whether the vulnerability is exploitable in the current usage context.
+
+4. **Action Required**: For each package, recommend one of:
    - SAFE: No action needed (obligations don't trigger for this usage)
    - NOTICE: Add attribution to NOTICES file
    - REVIEW: Needs human/legal review (explain why)

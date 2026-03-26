@@ -10,6 +10,7 @@ import type {
   Ecosystem, LicenseTier, ComplianceStatus, Severity, SnapshotDiff,
 } from '../types.js';
 import type { DependencyHealth } from '../pipeline/health.js';
+import type { DependencyVulnerabilities } from '../pipeline/vulnerabilities.js';
 import { generateRemediationPlan, renderRemediationPlan } from './remediation-plan.js';
 
 /**
@@ -84,7 +85,7 @@ export function buildReport(
 /**
  * Render the report as Markdown.
  */
-export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff, healthData?: DependencyHealth[]): string {
+export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff, healthData?: DependencyHealth[], vulnData?: DependencyVulnerabilities[]): string {
   const lines: string[] = [];
   const s = report.summary;
   const m = report.metadata;
@@ -107,6 +108,14 @@ export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff, h
   lines.push(`## Risk Score: ${s.riskScore}/100 — ${riskLabel}`);
   lines.push('');
 
+  // Vulnerability headline if any CVEs found
+  const totalCves = vulnData?.reduce((sum, v) => sum + v.totalCount, 0) ?? 0;
+  const vulnPkgs = vulnData?.filter(v => v.totalCount > 0).length ?? 0;
+  if (totalCves > 0) {
+    lines.push(`**🛡️ Vulnerabilities:** ${totalCves} known CVE${totalCves > 1 ? 's' : ''} across ${vulnPkgs} package${vulnPkgs > 1 ? 's' : ''}`);
+    lines.push('');
+  }
+
   // Executive Summary — the 30-second read for non-technical stakeholders
   lines.push(`## Executive Summary`);
   lines.push('');
@@ -114,7 +123,7 @@ export function renderMarkdownReport(report: AuditReport, diff?: SnapshotDiff, h
   lines.push('');
 
   // Remediation Plan — prioritized action items
-  const plan = generateRemediationPlan(report.evaluations, healthData);
+  const plan = generateRemediationPlan(report.evaluations, healthData, vulnData);
   const planSection = renderRemediationPlan(plan);
   if (planSection) {
     lines.push(planSection);

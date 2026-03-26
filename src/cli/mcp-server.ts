@@ -69,6 +69,7 @@ server.tool(
         ecosystems: result.ecosystems ?? [],
         evaluations: result.evaluations ?? [],
         healthData: result.healthData,
+        vulnData: result.vulnData,
         riskScore: result.summary.riskScore,
       });
 

@@ -14,6 +14,11 @@ import { loadPolicy, evaluateLicense } from './policy.js';
 import { buildReport, renderMarkdownReport, saveReport } from '../output/reporting.js';
 import { generateNoticesFile, saveNoticesFile } from '../output/notices.js';
 import { checkDependencyHealth, renderHealthSection } from './health.js';
+import { renderRankedSummaryTable } from '../output/risk-table.js';
+import { checkVulnerabilities } from './vulnerabilities.js';
+import { computeDependencyRiskScores } from '../output/risk-score.js';
+import type { DependencyVulnerabilities } from './vulnerabilities.js';
+import type { RankedDependency } from '../output/risk-score.js';
 import { detectWorkspaces, scopeDependenciesToWorkspaces, applyDistributionOverrides, renderWorkspaceSection } from './workspaces.js';
 import { createSnapshot, saveSnapshot, loadLatestSnapshot, computeDiff, saveDiff } from '../state/state.js';
 import type { ComplyConfig, PolicyEvaluation, Ecosystem, SnapshotDiff, Dependency, DistributionModel } from '../types.js';
@@ -40,6 +45,8 @@ export interface PipelineResult {
   diff?: SnapshotDiff;
   workspaceConfig?: WorkspaceConfig;
   healthData?: DependencyHealth[];
+  vulnData?: DependencyVulnerabilities[];
+  rankedDeps?: RankedDependency[];
   /** For CI mode: structured annotations */
   ciAnnotations?: CIAnnotation[];
   /** Full evaluations for assistant mode */
@@ -142,6 +149,23 @@ export async function runPipeline(
       if (deprecated > 0) console.log(`  ⚠️  ${deprecated} deprecated package(s)`);
       if (stale > 0) console.log(`  ⚠️  ${stale} stale/abandoned package(s)`);
       if (licenseChanged > 0) console.log(`  ⚠️  ${licenseChanged} package(s) with license changes in newer versions`);
+    }
+  }
+
+  // ---- Phase 3c: Vulnerability Check ----
+  let vulnData: DependencyVulnerabilities[] | undefined;
+  if (!config.diffOnly) {
+    callbacks?.onPhase?.('vulnerabilities', `Checking for known vulnerabilities across ${dependencies.length} packages...`);
+    vulnData = await checkVulnerabilities(dependencies, { verbose: config.verbose });
+
+    if (config.verbose) {
+      const vulnPkgs = vulnData.filter(v => v.totalCount > 0).length;
+      const totalCves = vulnData.reduce((sum, v) => sum + v.totalCount, 0);
+      if (totalCves > 0) {
+        console.log(`  🛡️  ${totalCves} known CVE(s) across ${vulnPkgs} package(s)`);
+      } else {
+        console.log(`  ✅ No known vulnerabilities found`);
+      }
     }
   }
 
@@ -251,8 +275,14 @@ export async function runPipeline(
     );
   }
 
-  // Build the full markdown with all sections (health data drives remediation plan)
-  let markdown = renderMarkdownReport(report, diff, healthData);
+  // Compute composite risk scores if we have health + vuln data
+  let rankedDeps: RankedDependency[] | undefined;
+  if (healthData && vulnData) {
+    rankedDeps = computeDependencyRiskScores(evaluations, healthData, vulnData);
+  }
+
+  // Build the full markdown with all sections (health + vuln data drive remediation plan)
+  let markdown = renderMarkdownReport(report, diff, healthData, vulnData);
 
   // Inject workspace section after executive summary
   if (workspaceConfig.isMonorepo) {
@@ -260,12 +290,25 @@ export async function runPipeline(
     markdown = markdown.replace('## Detailed Summary', wsSection + '\n## Detailed Summary');
   }
 
+  // Inject ranked risk table before health section (or before compliant list)
+  if (rankedDeps && rankedDeps.length > 0) {
+    const rankedSection = renderRankedSummaryTable(rankedDeps);
+    if (rankedSection) {
+      const insertBefore = markdown.indexOf('## ✅ Compliant Packages');
+      if (insertBefore > -1) {
+        markdown = markdown.slice(0, insertBefore) + rankedSection + '\n' + markdown.slice(insertBefore);
+      }
+    }
+  }
+
   // Inject health section before the compliant packages list
   if (healthData && healthData.length > 0) {
     const healthSection = renderHealthSection(healthData);
-    const insertPoint = markdown.indexOf('## ✅ Compliant Packages');
-    if (insertPoint > -1) {
-      markdown = markdown.slice(0, insertPoint) + healthSection + '\n' + markdown.slice(insertPoint);
+    const insertPoint = markdown.indexOf('## 🎯 Dependency Risk Ranking');
+    const fallbackPoint = markdown.indexOf('## ✅ Compliant Packages');
+    const target = insertPoint > -1 ? insertPoint : fallbackPoint;
+    if (target > -1) {
+      markdown = markdown.slice(0, target) + healthSection + '\n' + markdown.slice(target);
     } else {
       const footerIdx = markdown.lastIndexOf('---');
       if (footerIdx > -1) {
@@ -302,6 +345,11 @@ export async function runPipeline(
     await writeFile(join(snapshotDir, 'health.json'), JSON.stringify(healthData, null, 2));
   }
 
+  // Save vulnerability data if available
+  if (vulnData) {
+    await writeFile(join(snapshotDir, 'vulnerabilities.json'), JSON.stringify(vulnData, null, 2));
+  }
+
   // Save workspace config if monorepo
   if (workspaceConfig.isMonorepo) {
     await writeFile(join(snapshotDir, 'workspaces.json'), JSON.stringify({
@@ -332,6 +380,8 @@ export async function runPipeline(
     diff,
     workspaceConfig: workspaceConfig.isMonorepo ? workspaceConfig : undefined,
     healthData,
+    vulnData,
+    rankedDeps,
     ciAnnotations,
     evaluations,
     ecosystems,

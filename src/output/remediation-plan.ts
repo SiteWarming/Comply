@@ -9,6 +9,7 @@
 
 import type { PolicyEvaluation, RemediationStep } from '../types.js';
 import type { DependencyHealth } from '../pipeline/health.js';
+import type { DependencyVulnerabilities } from '../pipeline/vulnerabilities.js';
 
 // ---- Public Types ----
 
@@ -16,7 +17,7 @@ export type ActionPriority = 'critical' | 'high' | 'medium' | 'low' | 'info';
 
 export interface RemediationAction {
   priority: ActionPriority;
-  category: 'violation' | 'license_review' | 'deprecated' | 'license_drift' | 'abandoned';
+  category: 'violation' | 'license_review' | 'vulnerability' | 'deprecated' | 'license_drift' | 'abandoned';
   package: string;
   version: string;
   isDirect: boolean;
@@ -41,12 +42,18 @@ export interface RemediationPlan {
 
 export function generateRemediationPlan(
   evaluations: PolicyEvaluation[],
-  healthData?: DependencyHealth[]
+  healthData?: DependencyHealth[],
+  vulnData?: DependencyVulnerabilities[]
 ): RemediationPlan {
   const actions: RemediationAction[] = [];
 
   // Priority 1: Non-compliant packages (violations)
   actions.push(...generateViolationActions(evaluations));
+
+  // Priority 1b: Known vulnerabilities (CVEs)
+  if (vulnData) {
+    actions.push(...generateVulnerabilityActions(vulnData, evaluations));
+  }
 
   // Priority 2: Needs-review packages (unknown/unresolvable licenses)
   actions.push(...generateReviewActions(evaluations));
@@ -58,7 +65,7 @@ export function generateRemediationPlan(
 
   // Priority 4: License drift (only flag restrictive changes)
   if (healthData) {
-    actions.push(...generateLicenseDriftActions(healthData));
+    actions.push(...generateLicenseDriftActions(healthData, evaluations));
   }
 
   // Priority 5: Abandoned direct dependencies
@@ -167,12 +174,12 @@ function generateDeprecatedActions(
   healthData: DependencyHealth[],
   evaluations: PolicyEvaluation[]
 ): RemediationAction[] {
-  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}`, e]));
+  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}@${e.dependency.ecosystem}`, e]));
 
   return healthData
     .filter(h => h.isDeprecated)
     .map(h => {
-      const eval_ = evalMap.get(`${h.name}@${h.version}`);
+      const eval_ = evalMap.get(`${h.name}@${h.version}@${h.ecosystem}`);
       const isDirect = eval_?.dependency.isDirect ?? false;
       const details: string[] = [];
 
@@ -203,46 +210,45 @@ function generateDeprecatedActions(
     });
 }
 
-function generateLicenseDriftActions(healthData: DependencyHealth[]): RemediationAction[] {
-  // Only flag license changes that move toward MORE restrictive licenses
-  const MORE_RESTRICTIVE_TIERS = new Set(['strong_copyleft', 'network_copyleft', 'non_commercial', 'proprietary']);
+function generateLicenseDriftActions(healthData: DependencyHealth[], evaluations: PolicyEvaluation[]): RemediationAction[] {
+  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}@${e.dependency.ecosystem}`, e]));
 
   return healthData
     .filter(h => h.licenseChanged && h.latestLicense)
     .filter(h => {
-      // BlueOak-1.0.0 is permissive — not a concern
-      // ISC → MIT is fine
-      // We only flag if the new license COULD be more restrictive
       const latest = h.latestLicense!.toUpperCase();
-      // If moving to a known permissive license, skip
       const PERMISSIVE = ['MIT', 'ISC', 'BSD-2-CLAUSE', 'BSD-3-CLAUSE', 'APACHE-2.0', 'BLUEOAK-1.0.0', '0BSD', 'UNLICENSE'];
       return !PERMISSIVE.includes(latest);
     })
-    .map(h => ({
-      priority: 'info' as const,
-      category: 'license_drift' as const,
-      package: h.name,
-      version: h.version,
-      isDirect: false,
-      summary: `License changed to "${h.latestLicense}" in v${h.latestVersion} — review before upgrading`,
-      details: [
-        `Installed version has a different license than latest (v${h.latestVersion}): ${h.latestLicense}`,
-        'Review the new license terms before bumping to the latest version.',
-      ],
-      effort: 'trivial' as const,
-    }));
+    .map(h => {
+      const eval_ = evalMap.get(`${h.name}@${h.version}@${h.ecosystem}`);
+      const isDirect = eval_?.dependency.isDirect ?? false;
+      return {
+        priority: 'info' as const,
+        category: 'license_drift' as const,
+        package: h.name,
+        version: h.version,
+        isDirect,
+        summary: `License changed to "${h.latestLicense}" in v${h.latestVersion} — review before upgrading`,
+        details: [
+          `Installed version has a different license than latest (v${h.latestVersion}): ${h.latestLicense}`,
+          'Review the new license terms before bumping to the latest version.',
+        ],
+        effort: 'trivial' as const,
+      };
+    });
 }
 
 function generateAbandonedActions(
   healthData: DependencyHealth[],
   evaluations: PolicyEvaluation[]
 ): RemediationAction[] {
-  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}`, e]));
+  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}@${e.dependency.ecosystem}`, e]));
 
   // Only flag direct abandoned dependencies — transitive ones are noise
   return healthData
     .filter(h => {
-      const eval_ = evalMap.get(`${h.name}@${h.version}`);
+      const eval_ = evalMap.get(`${h.name}@${h.version}@${h.ecosystem}`);
       const isDirect = eval_?.dependency.isDirect ?? false;
       return isDirect && h.maintenanceRisk === 'abandoned' && !h.isDeprecated; // deprecated already covered
     })
@@ -263,6 +269,62 @@ function generateAbandonedActions(
           'Check if the package still meets your needs or if actively maintained alternatives exist.',
         ],
         effort: 'medium' as const,
+      };
+    });
+}
+
+function generateVulnerabilityActions(
+  vulnData: DependencyVulnerabilities[],
+  evaluations: PolicyEvaluation[]
+): RemediationAction[] {
+  const evalMap = new Map(evaluations.map(e => [`${e.dependency.name}@${e.dependency.version}@${e.dependency.ecosystem}`, e]));
+
+  return vulnData
+    .filter(v => v.totalCount > 0)
+    .map(v => {
+      const eval_ = evalMap.get(`${v.name}@${v.version}@${v.ecosystem}`);
+      const isDirect = eval_?.dependency.isDirect ?? false;
+
+      // Priority: critical CVSS or direct dep with any CVE = high minimum
+      let priority: ActionPriority;
+      if (v.maxCvss >= 9.0) priority = 'critical';
+      else if (isDirect || v.maxCvss >= 7.0) priority = 'high';
+      else if (v.maxCvss >= 4.0) priority = 'medium';
+      else priority = 'low';
+
+      const details: string[] = [];
+      const hasFixAvailable = v.vulnerabilities.some(vuln => vuln.fixedVersions.length > 0);
+
+      // List top 5 CVEs
+      const topVulns = v.vulnerabilities.slice(0, 5);
+      for (const vuln of topVulns) {
+        const id = vuln.cveId ?? vuln.aliases[0] ?? 'Unknown';
+        const score = vuln.cvssScore !== null ? ` (CVSS ${vuln.cvssScore})` : '';
+        details.push(`${id}${score}: ${vuln.summary}`);
+      }
+      if (v.totalCount > 5) {
+        details.push(`...and ${v.totalCount - 5} more`);
+      }
+
+      if (hasFixAvailable) {
+        const fixVersions = [...new Set(v.vulnerabilities.flatMap(vuln => vuln.fixedVersions))];
+        const latest = fixVersions.sort().at(-1);
+        if (latest) {
+          details.push(`Fix available: upgrade to ${latest}`);
+        }
+      }
+
+      const cvssLabel = v.maxCvss > 0 ? ` (max CVSS ${v.maxCvss})` : '';
+
+      return {
+        priority,
+        category: 'vulnerability' as const,
+        package: v.name,
+        version: v.version,
+        isDirect,
+        summary: `${v.totalCount} known CVE${v.totalCount > 1 ? 's' : ''}${cvssLabel}${hasFixAvailable ? ' — fix available' : ''}`,
+        details,
+        effort: hasFixAvailable ? 'low' as const : 'medium' as const,
       };
     });
 }
@@ -291,6 +353,7 @@ export function renderRemediationPlan(plan: RemediationPlan): string {
   // Group by category for readability
   const categories: Array<{ key: RemediationAction['category']; title: string; icon: string }> = [
     { key: 'violation', title: 'License Violations', icon: '❌' },
+    { key: 'vulnerability', title: 'Known Vulnerabilities', icon: '🛡️' },
     { key: 'license_review', title: 'License Review Required', icon: '⚠️' },
     { key: 'deprecated', title: 'Deprecated Packages', icon: '🚫' },
     { key: 'license_drift', title: 'License Drift Alerts', icon: '🔄' },
