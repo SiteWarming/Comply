@@ -8,7 +8,7 @@ import { generateExecutiveSummary } from './executive-summary.js';
 import type {
   AuditReport, PolicyEvaluation, ResolvedLicense, Dependency,
   Ecosystem, LicenseTier, ComplianceStatus, Severity, SnapshotDiff,
-} from './types.js';
+} from '../types.js';
 
 /**
  * Build an AuditReport from evaluation results.
@@ -277,29 +277,49 @@ export async function saveReport(
 function calculateRiskScore(evaluations: PolicyEvaluation[]): number {
   if (evaluations.length === 0) return 0;
 
-  let score = 0;
+  let rawScore = 0;
   for (const e of evaluations) {
+    let weight = 0;
+
     switch (e.severity) {
       case 'critical':
-        if (e.status === 'non_compliant') score += 25;
-        else if (e.status === 'needs_review') score += 15;
+        if (e.status === 'non_compliant') weight = 25;
+        else if (e.status === 'needs_review') weight = 10;
         break;
       case 'high':
-        if (e.status === 'non_compliant') score += 15;
-        else if (e.status === 'needs_review') score += 8;
+        if (e.status === 'non_compliant') weight = 15;
+        else if (e.status === 'needs_review') weight = 5;
         break;
       case 'medium':
-        if (e.status === 'non_compliant') score += 5;
-        else if (e.status === 'needs_review') score += 3;
-        else if (e.status === 'conditionally_compliant') score += 2;
+        if (e.status === 'non_compliant') weight = 5;
+        else if (e.status === 'needs_review') weight = 1;
+        // conditionally_compliant contributes 0 — matched a rule, not a violation
         break;
       case 'low':
-        if (e.status === 'non_compliant') score += 2;
+        if (e.status === 'non_compliant') weight = 2;
         break;
     }
+
+    if (weight === 0) continue;
+
+    // Discount dev dependencies (90% off — rarely a real issue)
+    const dep = e.dependency;
+    if ((dep as any).isDev) {
+      weight *= 0.1;
+    }
+    // Discount transitive deps (50% off — not a direct choice)
+    else if (!dep.isDirect) {
+      weight *= 0.5;
+    }
+
+    rawScore += weight;
   }
 
-  return Math.min(100, score);
+  // Normalize against total dep count so large repos aren't unfairly penalized
+  const maxReasonable = Math.max(evaluations.length * 0.25, 1);
+  const normalized = Math.round((rawScore / maxReasonable) * 100);
+
+  return Math.min(100, normalized);
 }
 
 function severityOrder(s: Severity): number {

@@ -3,15 +3,15 @@
   "version": "0.1.0",
   "description": "AI-powered open source license compliance agent. Scans repos, resolves licenses, analyzes usage context, and generates actionable compliance reports.",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/cli/index.js",
   "bin": {
-    "comply": "dist/index.js",
-    "comply-mcp": "dist/mcp-server.js"
+    "comply": "dist/cli/index.js",
+    "comply-mcp": "dist/cli/mcp-server.js"
   },
   "scripts": {
     "build": "tsc",
-    "dev": "tsx src/index.ts",
-    "start": "node dist/index.js",
+    "dev": "tsx src/cli/index.ts",
+    "start": "node dist/cli/index.js",
     "lint": "tsc --noEmit"
   },
   "keywords": [

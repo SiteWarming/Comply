@@ -4,8 +4,8 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import { classifyLicense } from './spdx.js';
-import type { Dependency, ResolvedLicense } from './types.js';
+import { classifyLicense } from '../state/spdx.js';
+import type { Dependency, ResolvedLicense } from '../types.js';
 
 interface CacheEntry {
   license: string;

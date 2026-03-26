@@ -8,7 +8,7 @@
 // making, so it's nearly free to add.
 // ============================================================================
 
-import type { Dependency, Ecosystem } from './types.js';
+import type { Dependency, Ecosystem } from '../types.js';
 
 export interface DependencyHealth {
   name: string;

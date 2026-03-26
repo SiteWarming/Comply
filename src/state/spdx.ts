@@ -2,7 +2,7 @@
 // SPDX License Database — Static license classifications
 // ============================================================================
 
-import type { LicenseInfo, LicenseTier } from './types.js';
+import type { LicenseInfo, LicenseTier } from '../types.js';
 
 interface LicenseEntry {
   name: string;

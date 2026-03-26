@@ -4,7 +4,7 @@
 
 import { readdir } from 'node:fs/promises';
 import { join, basename } from 'node:path';
-import type { ManifestFile, Ecosystem } from './types.js';
+import type { ManifestFile, Ecosystem } from '../types.js';
 
 /** Map of filename patterns to ecosystem + type */
 const MANIFEST_PATTERNS: Array<{

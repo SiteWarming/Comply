@@ -11,7 +11,7 @@
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
-import type { ResolvedLicense, PolicyEvaluation } from './types.js';
+import type { ResolvedLicense, PolicyEvaluation } from '../types.js';
 
 interface NoticesEntry {
   name: string;

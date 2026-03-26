@@ -12,7 +12,7 @@
 import { readFile, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { generateExecutiveSummary } from './executive-summary.js';
-import type { AuditReport, Severity, ComplianceStatus, LicenseTier } from './types.js';
+import type { AuditReport, Severity, ComplianceStatus, LicenseTier } from '../types.js';
 
 interface RepoSummary {
   name: string;

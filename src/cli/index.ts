@@ -6,14 +6,13 @@
 import { Command } from 'commander';
 import { resolve, basename, join } from 'node:path';
 import { readFile, writeFile, mkdir, readdir } from 'node:fs/promises';
-import { runPipeline } from './pipeline.js';
-import { getDefaultPolicy } from './policy.js';
-import { generateOrgSummary, renderOrgSummaryMarkdown } from './summary.js';
-import { generateNoticesFile, saveNoticesFile } from './notices.js';
-import { buildAssistantReport } from './assistant-report.js';
-import { loadPolicy } from './policy.js';
+import { runPipeline } from '../pipeline/pipeline.js';
+import { getDefaultPolicy, loadPolicy } from '../pipeline/policy.js';
+import { generateOrgSummary, renderOrgSummaryMarkdown } from '../output/summary.js';
+import { generateNoticesFile, saveNoticesFile } from '../output/notices.js';
+import { buildAssistantReport } from '../output/assistant-report.js';
 import YAML from 'yaml';
-import type { ComplyConfig, Ecosystem } from './types.js';
+import type { ComplyConfig, Ecosystem } from '../types.js';
 
 const VERSION = '0.1.0';
 
@@ -277,15 +276,24 @@ license_rules:
       - WTFPL
       - Zlib
       - BSL-1.0
+      - BlueOak-1.0.0
+      - Artistic-2.0
+      - Python-2.0
+      - X11
+      - CC-BY-4.0
+      - CC-BY-3.0
     action: allow
 
   weak_copyleft:
     licenses:
+      - LGPL-2.0
       - LGPL-2.1
       - LGPL-3.0
       - MPL-2.0
+      - EPL-1.0
       - EPL-2.0
       - EUPL-1.2
+      - CC-BY-SA-4.0
     action: allow_if
     conditions:
       - dynamic_linking_only
@@ -574,8 +582,8 @@ program
   .option('--prompts-dir <path>', 'Custom prompts directory')
   .option('-v, --verbose', 'Show per-case results')
   .action(async (options: any) => {
-    const { runEval, formatScorecard } = await import('./ai/eval.js');
-    const { createProvider } = await import('./ai/provider.js');
+    const { runEval, formatScorecard } = await import('../ai/eval.js');
+    const { createProvider } = await import('../ai/provider.js');
 
     console.log('\n  🧪 Comply OSS — AI Eval Harness\n');
 
@@ -612,6 +620,67 @@ program
   .action(async () => {
     const { startMcpServer } = await import('./mcp-server.js');
     await startMcpServer();
+  });
+
+// ============================================================================
+// fix — Auto-resolve obvious compliance issues
+// ============================================================================
+program
+  .command('fix')
+  .description('Auto-resolve obvious compliance issues and update policy/overrides')
+  .argument('[path]', 'Path to the repository', '.')
+  .option('-o, --output <dir>', 'Audit state directory', '.comply')
+  .option('-p, --policy <file>', 'Path to policy YAML file')
+  .option('--dry-run', 'Show what would be fixed without writing files')
+  .action(async (path: string, options: any) => {
+    const repoPath = resolve(path);
+    const auditDir = resolve(options.output);
+
+    console.log('\n  🔧 Comply OSS — Auto-Fix\n');
+
+    try {
+      // Run a fresh scan to get current evaluations
+      const config = {
+        repoPath,
+        auditDir,
+        policyPath: options.policy ? resolve(options.policy) : undefined,
+        enableAIAnalysis: false,
+        diffOnly: false,
+        verbose: false,
+      };
+
+      const result = await runPipeline(config);
+      const { loadPolicy } = await import('../pipeline/policy.js');
+      const policy = await loadPolicy(config.policyPath);
+      const { generateFixes, formatFixSummary, serializePolicy } = await import('../pipeline/fix.js');
+
+      const fixResult = generateFixes(result.evaluations ?? [], policy);
+
+      console.log(formatFixSummary(fixResult));
+
+      if (fixResult.fixes.length > 0 && !options.dryRun) {
+        const { writeFile } = await import('node:fs/promises');
+
+        // Write updated policy
+        const policyPath = config.policyPath || resolve('comply-policy.yaml');
+        const policyYaml = serializePolicy(fixResult.updatedPolicy);
+        await writeFile(policyPath, policyYaml);
+        console.log(`\n  ✅ Policy updated: ${policyPath}`);
+
+        // Re-scan to show updated results
+        console.log('  Re-scanning with updated policy...\n');
+        const reResult = await runPipeline({ ...config, policyPath });
+        const s = reResult.summary;
+        console.log(`  Risk: ${s.riskScore}/100 | Compliant: ${s.compliant}/${s.total} | Review: ${s.needsReview}`);
+      } else if (options.dryRun && fixResult.fixes.length > 0) {
+        console.log('\n  (dry run — no files modified)');
+      }
+
+      console.log('');
+    } catch (err) {
+      console.error(`\n  ❌ Error: ${(err as Error).message}\n`);
+      process.exit(1);
+    }
   });
 
 // ============================================================================

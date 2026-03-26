@@ -4,12 +4,12 @@
 
 import { readFile, readdir } from 'node:fs/promises';
 import { join, extname } from 'node:path';
-import type { ResolvedLicense, UsageAnalysis, UsageType, DistributionModel } from './types.js';
-import { createProvider } from './ai/provider.js';
-import type { AIProvider as NewAIProvider, AIConfig, ModelTier } from './ai/types.js';
-import { PromptLoader } from './ai/prompts.js';
-import { UsageAnalyzerOutputSchema } from './ai/schemas.js';
-import { parseAndValidate } from './ai/schemas.js';
+import type { ResolvedLicense, UsageAnalysis, UsageType, DistributionModel } from '../types.js';
+import { createProvider } from '../ai/provider.js';
+import type { AIProvider as NewAIProvider, AIConfig, ModelTier } from '../ai/types.js';
+import { PromptLoader } from '../ai/prompts.js';
+import { UsageAnalyzerOutputSchema } from '../ai/schemas.js';
+import { parseAndValidate } from '../ai/schemas.js';
 
 const CODE_EXTENSIONS = new Set([
   '.js', '.ts', '.jsx', '.tsx', '.mjs', '.cjs',

@@ -17,6 +17,8 @@ export interface Dependency {
   version: string;
   ecosystem: Ecosystem;
   isDirect: boolean;
+  /** Whether this is a dev/test/build dependency (not shipped to production) */
+  isDev?: boolean;
   /** The manifest file that declared this dependency */
   source: string;
 }

@@ -7,8 +7,9 @@ import YAML from 'yaml';
 import type {
   Policy, PolicyRule, PolicyAction, DistributionModel, Dependency,
   ResolvedLicense, PolicyEvaluation, ComplianceStatus, Severity,
-  RemediationStep, UsageAnalysis,
-} from './types.js';
+  RemediationStep, UsageAnalysis, LicenseTier,
+} from '../types.js';
+import { classifyLicense } from '../state/spdx.js';
 
 /**
  * Load a policy from a YAML file, or return the default policy.
@@ -48,11 +49,15 @@ export function getDefaultPolicy(): Policy {
     },
     licenseRules: {
       permissive: {
-        licenses: ['MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'Apache-2.0', 'ISC', '0BSD', 'Unlicense', 'CC0-1.0', 'WTFPL', 'Zlib', 'BSL-1.0', 'BlueOak-1.0.0'],
+        licenses: [
+          'MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'Apache-2.0', 'ISC', '0BSD',
+          'Unlicense', 'CC0-1.0', 'WTFPL', 'Zlib', 'BSL-1.0', 'BlueOak-1.0.0',
+          'Artistic-2.0', 'Python-2.0', 'X11', 'CC-BY-4.0', 'CC-BY-3.0',
+        ],
         action: 'allow',
       },
       weak_copyleft: {
-        licenses: ['LGPL-2.1', 'LGPL-3.0', 'MPL-2.0', 'EPL-2.0', 'EUPL-1.2'],
+        licenses: ['LGPL-2.0', 'LGPL-2.1', 'LGPL-3.0', 'MPL-2.0', 'EPL-1.0', 'EPL-2.0', 'EUPL-1.2', 'CC-BY-SA-4.0'],
         action: 'allow_if',
         conditions: ['dynamic_linking_only', 'no_modifications'],
       },
@@ -75,9 +80,9 @@ export function getDefaultPolicy(): Policy {
     severityLevels: {
       critical: ['AGPL-3.0', 'SSPL-1.0'],
       high: ['GPL-2.0', 'GPL-3.0', 'CC-BY-NC-4.0'],
-      medium: ['LGPL-2.1', 'LGPL-3.0', 'MPL-2.0', 'EPL-2.0'],
-      low: ['Apache-2.0'], // Needs NOTICE file but otherwise fine
-      none: ['MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD', 'Unlicense', 'BlueOak-1.0.0'],
+      medium: ['LGPL-2.0', 'LGPL-2.1', 'LGPL-3.0', 'MPL-2.0', 'EPL-1.0', 'EPL-2.0', 'CC-BY-SA-4.0'],
+      low: ['Apache-2.0', 'CC-BY-4.0', 'CC-BY-3.0'],
+      none: ['MIT', 'BSD-2-Clause', 'BSD-3-Clause', 'ISC', '0BSD', 'Unlicense', 'BlueOak-1.0.0', 'Artistic-2.0', 'Python-2.0', 'X11', 'CC0-1.0', 'WTFPL', 'Zlib', 'BSL-1.0'],
     },
     allowlist: [],
     denylist: [],
@@ -108,6 +113,21 @@ export function evaluateLicense(
     };
   }
 
+  // Dev dependencies in SaaS/internal models don't trigger obligations
+  // (they are never distributed), except for network copyleft (AGPL)
+  const distModel = policy.distributionModel.default;
+  if (dep.isDev && (distModel === 'saas' || distModel === 'internal') && license.tier !== 'network_copyleft') {
+    return {
+      dependency: dep,
+      license: resolved,
+      usageAnalysis,
+      status: 'compliant',
+      severity: 'none',
+      reason: `Dev dependency in ${distModel} context — license obligations do not apply (no distribution)`,
+      matchedRule: 'dev_dependency',
+    };
+  }
+
   // Check denylist
   if (policy.denylist?.includes(dep.name)) {
     return {
@@ -128,19 +148,45 @@ export function evaluateLicense(
 
   // Unknown license
   if (license.tier === 'unknown' || !license.spdxId) {
+    const raw = (resolved.rawLicense || 'none').toLowerCase();
+    const isSeeFile = raw.startsWith('see license in ') || raw.startsWith('see ') && raw.includes('license');
+    const isNone = raw === 'none' || raw === 'unlicensed' || raw === '';
+
+    let reason: string;
+    let remediation: RemediationStep[];
+
+    if (isSeeFile) {
+      reason = `License declared via file reference: "${resolved.rawLicense}". Check the package's LICENSE file — this is usually a standard permissive license (MIT, Apache-2.0).`;
+      remediation = [{
+        action: 'seek_approval',
+        description: `Read the LICENSE file in ${dep.name}'s repository. If it's MIT/Apache-2.0/BSD, add the package to your policy allowlist or run \`comply fix\`.`,
+        effort: 'trivial',
+      }];
+    } else if (isNone) {
+      reason = `No license declared for ${dep.name}. This package has no license metadata in the registry.`;
+      remediation = [{
+        action: 'seek_approval',
+        description: `Check ${dep.name}'s repository for a LICENSE file. If no license exists, this package is technically "all rights reserved" and should be replaced or the author contacted.`,
+        effort: 'low',
+      }];
+    } else {
+      reason = `License could not be classified: "${resolved.rawLicense}". The SPDX identifier is not recognized.`;
+      remediation = [{
+        action: 'seek_approval',
+        description: `Manually identify the license for ${dep.name}. Check the package repository, then add to your policy file or comply-overrides.yaml.`,
+        effort: 'low',
+      }];
+    }
+
     return {
       dependency: dep,
       license: resolved,
       usageAnalysis,
       status: 'needs_review',
       severity: 'medium',
-      reason: `License could not be determined: "${resolved.rawLicense || 'none'}"`,
+      reason,
       matchedRule: 'unknown_license',
-      remediation: [{
-        action: 'seek_approval',
-        description: `Manually review the license for ${dep.name}. Check the package repository for a LICENSE file.`,
-        effort: 'low',
-      }],
+      remediation,
     };
   }
 
@@ -237,17 +283,29 @@ function evaluateConditional(
 
   // Without usage analysis, we can't fully evaluate conditions
   if (!usageAnalysis) {
+    // For npm packages, dynamic linking is the default (require/import).
+    // LGPL/MPL conditions are typically met without any special action.
+    const isNpmDynamic = dep.ecosystem === 'npm' &&
+      conditions.includes('dynamic_linking_only') &&
+      !conditions.some(c => c !== 'dynamic_linking_only' && c !== 'no_modifications');
+
+    const contextHint = isNpmDynamic
+      ? ` In Node.js, packages are dynamically linked via require/import — LGPL conditions are typically met by default unless you vendored or modified the source.`
+      : '';
+
     return {
       dependency: dep,
       license: resolved,
       status: 'conditionally_compliant',
       severity,
-      reason: `License ${spdxId} is conditionally allowed under rule "${ruleName}". Conditions: ${conditions.join(', ')}. Run with --ai to perform usage analysis.`,
+      reason: `License ${spdxId} is conditionally allowed under rule "${ruleName}". Conditions: ${conditions.join(', ')}.${contextHint}`,
       matchedRule: ruleName,
       remediation: [{
         action: 'seek_approval',
-        description: `Verify that usage of ${dep.name} meets conditions: ${conditions.join(', ')}`,
-        effort: 'low',
+        description: isNpmDynamic
+          ? `Likely compliant — Node.js uses dynamic linking by default. Verify you haven't vendored or patched ${dep.name}'s source. Run \`comply fix\` to auto-approve.`
+          : `Verify that usage of ${dep.name} meets conditions: ${conditions.join(', ')}`,
+        effort: 'trivial',
       }],
     };
   }
@@ -337,6 +395,25 @@ function findMatchingRule(spdxId: string, policy: Policy): string | null {
       }
     }
   }
+
+  // Tier-based fallback: if the SPDX DB knows this license's tier,
+  // match it to the corresponding policy rule by tier name
+  const licenseInfo = classifyLicense(spdxId);
+  if (licenseInfo.tier !== 'unknown') {
+    const tierToRule: Record<string, string> = {
+      permissive: 'permissive',
+      weak_copyleft: 'weak_copyleft',
+      strong_copyleft: 'strong_copyleft',
+      network_copyleft: 'network_copyleft',
+      non_commercial: 'non_commercial',
+      proprietary: 'non_commercial',
+    };
+    const fallbackRule = tierToRule[licenseInfo.tier];
+    if (fallbackRule && policy.licenseRules[fallbackRule]) {
+      return fallbackRule;
+    }
+  }
+
   return null;
 }
 

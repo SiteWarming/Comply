@@ -18,12 +18,12 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import { resolve, basename } from 'node:path';
-import { runPipeline } from './pipeline.js';
-import { loadPolicy } from './policy.js';
-import { buildAssistantReport } from './assistant-report.js';
-import { loadLatestSnapshot } from './state.js';
-import { classifyLicense } from './spdx.js';
-import type { ComplyConfig, Ecosystem } from './types.js';
+import { runPipeline } from '../pipeline/pipeline.js';
+import { loadPolicy } from '../pipeline/policy.js';
+import { buildAssistantReport } from '../output/assistant-report.js';
+import { loadLatestSnapshot } from '../state/state.js';
+import { classifyLicense } from '../state/spdx.js';
+import type { ComplyConfig, Ecosystem } from '../types.js';
 
 const VERSION = '0.1.0';
 

@@ -3,34 +3,37 @@
 // ============================================================================
 
 import { readFile } from 'node:fs/promises';
-import { basename } from 'node:path';
-import type { Dependency, Ecosystem, ManifestFile } from './types.js';
+import { basename, join } from 'node:path';
+import type { Dependency, Ecosystem, ManifestFile } from '../types.js';
 
 /**
  * Extract all dependencies from discovered manifest files.
  * Currently fully supports npm. Other ecosystems have basic support.
  */
 export async function extractDependencies(manifests: ManifestFile[]): Promise<Dependency[]> {
-  const allDeps: Dependency[] = [];
-  const seen = new Set<string>();
+  const depMap = new Map<string, Dependency>();
 
   for (const manifest of manifests) {
     try {
       const deps = await parseManifest(manifest);
       for (const dep of deps) {
         const key = `${dep.ecosystem}:${dep.name}@${dep.version}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          allDeps.push(dep);
+        const existing = depMap.get(key);
+        if (!existing) {
+          depMap.set(key, dep);
+        } else {
+          // Merge: if either source says isDirect, it's direct.
+          // isDev only if BOTH sources agree it's dev (or only one source has it).
+          if (dep.isDirect) existing.isDirect = true;
+          if (dep.isDev === false) existing.isDev = false;
         }
       }
     } catch (err) {
-      // Log but don't fail on individual parse errors
       console.warn(`  Warning: Failed to parse ${manifest.path}: ${(err as Error).message}`);
     }
   }
 
-  return allDeps;
+  return Array.from(depMap.values());
 }
 
 async function parseManifest(manifest: ManifestFile): Promise<Dependency[]> {
@@ -68,24 +71,22 @@ async function parsePackageJson(filePath: string): Promise<Dependency[]> {
   const pkg = JSON.parse(content);
   const deps: Dependency[] = [];
 
-  const addDeps = (section: Record<string, string> | undefined, isDirect: boolean) => {
+  const addDeps = (section: Record<string, string> | undefined, isDev: boolean) => {
     if (!section) return;
     for (const [name, version] of Object.entries(section)) {
       deps.push({
         name,
         version: cleanVersion(version),
         ecosystem: 'npm',
-        isDirect,
+        isDirect: true,
+        isDev,
         source: filePath,
       });
     }
   };
 
-  addDeps(pkg.dependencies, true);
+  addDeps(pkg.dependencies, false);
   addDeps(pkg.devDependencies, true);
-  // Note: we include devDeps because they can still pose license issues
-  // (e.g., if bundled, or in some interpretations of distribution)
-  // The policy engine can filter them out if configured to
 
   return deps;
 }
@@ -95,22 +96,43 @@ async function parsePackageLockJson(filePath: string): Promise<Dependency[]> {
   const lockfile = JSON.parse(content);
   const deps: Dependency[] = [];
 
+  // Cross-reference the sibling package.json to determine true direct deps
+  const dir = filePath.replace(/\/package-lock\.json$/, '');
+  let directProdDeps = new Set<string>();
+  let directDevDeps = new Set<string>();
+  try {
+    const pkgContent = await readFile(join(dir, 'package.json'), 'utf-8');
+    const pkg = JSON.parse(pkgContent);
+    directProdDeps = new Set(Object.keys(pkg.dependencies ?? {}));
+    directDevDeps = new Set(Object.keys(pkg.devDependencies ?? {}));
+  } catch {
+    // If no sibling package.json, fall back to lockfile-only heuristics
+  }
+
+  const hasRootRef = directProdDeps.size > 0 || directDevDeps.size > 0;
+
   // v2/v3 lockfile format (packages field)
   if (lockfile.packages) {
     for (const [pkgPath, info] of Object.entries(lockfile.packages as Record<string, any>)) {
-      // Skip the root package (empty string key)
       if (!pkgPath || pkgPath === '') continue;
 
-      // Extract package name from path (node_modules/foo or node_modules/@scope/foo)
       const parts = pkgPath.replace(/^node_modules\//, '').split('node_modules/');
       const name = parts[parts.length - 1];
 
       if (name && info.version) {
+        const isDirect = hasRootRef
+          ? directProdDeps.has(name) || directDevDeps.has(name)
+          : !pkgPath.includes('node_modules/node_modules/');
+
+        // isDev: lockfile v2/v3 has a `dev` boolean field, or infer from package.json
+        const isDev = info.dev === true || (hasRootRef && directDevDeps.has(name) && !directProdDeps.has(name));
+
         deps.push({
           name,
           version: info.version,
           ecosystem: 'npm',
-          isDirect: !pkgPath.includes('node_modules/node_modules/'),
+          isDirect,
+          isDev,
           source: filePath,
         });
       }
@@ -118,14 +140,20 @@ async function parsePackageLockJson(filePath: string): Promise<Dependency[]> {
   }
   // v1 lockfile format (dependencies field)
   else if (lockfile.dependencies) {
-    const walkV1 = (depsObj: Record<string, any>, isDirect: boolean) => {
+    const walkV1 = (depsObj: Record<string, any>, parentIsDirect: boolean) => {
       for (const [name, info] of Object.entries(depsObj)) {
         if ((info as any).version) {
+          const isDirect = hasRootRef
+            ? directProdDeps.has(name) || directDevDeps.has(name)
+            : parentIsDirect;
+          const isDev = (info as any).dev === true || (hasRootRef && directDevDeps.has(name) && !directProdDeps.has(name));
+
           deps.push({
             name,
             version: (info as any).version,
             ecosystem: 'npm',
             isDirect,
+            isDev,
             source: filePath,
           });
         }

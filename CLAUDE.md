@@ -16,44 +16,44 @@ Key differentiator: AI analyzes usage context (static linking, SaaS vs distribut
 npm install                                          # Install dependencies
 npm run build                                        # TypeScript compile (tsc)
 npm run lint                                         # Type-check only (tsc --noEmit)
-npx tsx src/index.ts scan /path/to/repo --verbose    # Dev mode scan
-npx tsx src/index.ts scan /path/to/repo --ai         # With AI analysis
-npx tsx src/index.ts scan /path/to/repo --ai --ai-tier budget    # Free models only
-npx tsx src/index.ts scan /path/to/repo --ai --ai-tier premium   # All agents incl. premium
-npx tsx src/index.ts init                            # Generate default policy YAML
-npx tsx src/index.ts diff /path/to/repo              # Show changes since last scan
-npx tsx src/index.ts summary .comply -o report.md    # Org-wide multi-repo roll-up
-npx tsx src/index.ts notices /path/to/repo --save NOTICES  # Generate attribution file
-npx tsx src/index.ts scan /path/to/repo --for-assistant  # JSON for AI assistants (no API key)
-npx tsx src/index.ts eval                            # Run AI eval harness
-npx tsx src/index.ts eval --agent classifier -v      # Eval single agent, verbose
-npx tsx src/index.ts mcp                             # Start MCP server
-npx tsx src/index.ts init --mcp                      # Generate policy + .mcp.json
+npx tsx src/cli/index.ts scan /path/to/repo --verbose    # Dev mode scan
+npx tsx src/cli/index.ts scan /path/to/repo --ai         # With AI analysis
+npx tsx src/cli/index.ts scan /path/to/repo --ai --ai-tier budget    # Free models only
+npx tsx src/cli/index.ts scan /path/to/repo --ai --ai-tier premium   # All agents incl. premium
+npx tsx src/cli/index.ts init                            # Generate default policy YAML
+npx tsx src/cli/index.ts diff /path/to/repo              # Show changes since last scan
+npx tsx src/cli/index.ts summary .comply -o report.md    # Org-wide multi-repo roll-up
+npx tsx src/cli/index.ts notices /path/to/repo --save NOTICES  # Generate attribution file
+npx tsx src/cli/index.ts scan /path/to/repo --for-assistant  # JSON for AI assistants (no API key)
+npx tsx src/cli/index.ts eval                            # Run AI eval harness
+npx tsx src/cli/index.ts eval --agent classifier -v      # Eval single agent, verbose
+npx tsx src/cli/index.ts mcp                             # Start MCP server
+npx tsx src/cli/index.ts init --mcp                      # Generate policy + .mcp.json
 ```
 
 No test framework is set up yet. Manual testing uses fixture repos:
 ```bash
 mkdir -p test/fixtures/sample-npm
 echo '{"dependencies":{"express":"^4.18.0","chalk":"^5.3.0"}}' > test/fixtures/sample-npm/package.json
-npx tsx src/index.ts scan test/fixtures/sample-npm --verbose
+npx tsx src/cli/index.ts scan test/fixtures/sample-npm --verbose
 ```
 
 ## Architecture
 
 ### Pipeline (10 sequential phases)
 
-`index.ts` (CLI via commander) → `pipeline.ts` (orchestrator) runs phases in order:
+`cli/index.ts` (CLI via commander) → `pipeline/pipeline.ts` (orchestrator) runs phases in order:
 
-1. **Discovery** (`discovery.ts`) — Walk repo tree matching `MANIFEST_PATTERNS` array (package.json, requirements.txt, go.mod, Cargo.toml, etc.)
-2. **Workspace Detection** (`workspaces.ts`) — Detect monorepo tools (npm, pnpm, lerna, nx, turborepo)
-3. **Extraction** (`extraction.ts`) — Parse manifest/lock files into `Dependency[]`
-4. **Resolution** (`resolution.ts`) — Hit npm/PyPI registries for license info, batched 10 at a time with 30-day file cache under `.comply/cache/licenses/`
-5. **Health** (`health.ts`) — Check age, deprecation, license drift between pinned and latest versions
-6. **Evaluation** (`policy.ts`) — Apply YAML policy rules (allow/deny/allow_if/review) per license
+1. **Discovery** (`pipeline/discovery.ts`) — Walk repo tree matching `MANIFEST_PATTERNS` array (package.json, requirements.txt, go.mod, Cargo.toml, etc.)
+2. **Workspace Detection** (`pipeline/workspaces.ts`) — Detect monorepo tools (npm, pnpm, lerna, nx, turborepo)
+3. **Extraction** (`pipeline/extraction.ts`) — Parse manifest/lock files into `Dependency[]`
+4. **Resolution** (`pipeline/resolution.ts`) — Hit npm/PyPI registries for license info, batched 10 at a time with 30-day file cache under `.comply/cache/licenses/`
+5. **Health** (`pipeline/health.ts`) — Check age, deprecation, license drift between pinned and latest versions
+6. **Evaluation** (`pipeline/policy.ts`) — Apply YAML policy rules (allow/deny/allow_if/review) per license
 7. **AI Analysis** (`ai/orchestrator.ts`) — Optional (`--ai`). Multi-agent pipeline: Classifier → Usage Analyzer → Obligation Reasoner → Conflict Detector → Remediation Advisor
-8. **Reporting** (`reporting.ts` + `executive-summary.ts`) — Generate Markdown + JSON reports
-9. **Drift** (`state.ts`) — Compare against previous snapshot, compute diff
-10. **State + NOTICES** (`state.ts` + `notices.ts`) — Save snapshot to `.comply/repos/{name}/snapshots/{id}/`, generate NOTICES files
+8. **Reporting** (`output/reporting.ts` + `output/executive-summary.ts`) — Generate Markdown + JSON reports
+9. **Drift** (`state/state.ts`) — Compare against previous snapshot, compute diff
+10. **State + NOTICES** (`state/state.ts` + `output/notices.ts`) — Save snapshot to `.comply/repos/{name}/snapshots/{id}/`, generate NOTICES files
 
 ### AI Subsystem (`src/ai/`)
 
@@ -105,9 +105,9 @@ All types live in `types.ts`. The core data flow is:
 
 ### Assistant Mode & MCP Server
 
-**`--for-assistant` mode** (`assistant-report.ts`): Outputs structured JSON (`AssistantReport`) containing meta, summary, flagged packages with full context (license details, policy evaluation, health data, code snippets), and a pre-written analysis prompt. The developer's AI assistant reasons about this data directly — no API keys needed.
+**`--for-assistant` mode** (`output/assistant-report.ts`): Outputs structured JSON (`AssistantReport`) containing meta, summary, flagged packages with full context (license details, policy evaluation, health data, code snippets), and a pre-written analysis prompt. The developer's AI assistant reasons about this data directly — no API keys needed.
 
-**MCP server** (`mcp-server.ts`): Exposes four tools over stdio for deep AI assistant integration:
+**MCP server** (`cli/mcp-server.ts`): Exposes four tools over stdio for deep AI assistant integration:
 - `comply_scan` — Full compliance scan returning AssistantReport JSON
 - `comply_explain_license` — License explanation with distribution-model-aware obligation analysis
 - `comply_diff` — Changes since last scan
@@ -117,14 +117,45 @@ Setup: `comply init --mcp` generates `.mcp.json`, or `comply mcp` starts the ser
 
 ### Module boundaries
 
-Each module has a clear input/output contract. `pipeline.ts` is the only file that imports from all modules. The `ai/` subsystem is self-contained — `pipeline.ts` calls `runAIOrchestrator()` and gets back updated evaluations. `spdx.ts` is a pure utility (license classification database) used only by `resolution.ts`.
+Each module has a clear input/output contract. `pipeline/pipeline.ts` is the only file that imports from all modules. The `ai/` subsystem is self-contained — `pipeline.ts` calls `runAIOrchestrator()` and gets back updated evaluations. `state/spdx.ts` is a pure utility (license classification database) used by `pipeline/resolution.ts` and `pipeline/policy.ts`.
+
+### Source tree
+
+```
+src/
+  types.ts              # Shared types (ManifestFile, Dependency, PolicyEvaluation, etc.)
+  cli/                  # CLI entry points
+    index.ts            # commander CLI
+    mcp-server.ts       # MCP server for AI assistants
+  pipeline/             # Core audit phases (run in order by pipeline.ts)
+    pipeline.ts         # Orchestrator — imports and sequences all phases
+    discovery.ts        # Phase 1: find manifest/lock files
+    workspaces.ts       # Phase 2: monorepo workspace detection
+    extraction.ts       # Phase 3: parse manifests into Dependency[]
+    resolution.ts       # Phase 4: resolve licenses from registries
+    health.ts           # Phase 5: dependency age/deprecation signals
+    policy.ts           # Phase 6: evaluate against YAML policy rules
+    analysis.ts         # Usage analysis bridge to AI subsystem
+    fix.ts              # Auto-resolve obvious compliance issues
+  output/               # Report generation and formatting
+    reporting.ts        # Markdown + JSON report builder
+    executive-summary.ts # Plain-English summary for stakeholders
+    notices.ts          # NOTICES/ATTRIBUTION file generator
+    assistant-report.ts # Structured JSON for --for-assistant mode
+    summary.ts          # Org-wide multi-repo roll-up
+  state/                # Persistence and reference data
+    state.ts            # Snapshot management, drift/diff tracking
+    spdx.ts             # SPDX license classification database
+  ai/                   # AI analysis subsystem (self-contained)
+    ...                 # See AI Subsystem section above
+```
 
 ## Adding a New Ecosystem
 
-1. Add filename patterns to `MANIFEST_PATTERNS` in `discovery.ts`
-2. Add parser case in `extraction.ts`
-3. Add registry resolver function in `resolution.ts`
-4. Add health checker in `health.ts`
+1. Add filename patterns to `MANIFEST_PATTERNS` in `pipeline/discovery.ts`
+2. Add parser case in `pipeline/extraction.ts`
+3. Add registry resolver function in `pipeline/resolution.ts`
+4. Add health checker in `pipeline/health.ts`
 5. Policy, reporting, state, AI, and workspaces are ecosystem-agnostic — no changes needed
 
 ## Adding a New AI Agent

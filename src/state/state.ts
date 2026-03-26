@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import type {
   Snapshot, SnapshotDiff, DiffEntry, AuditReport,
   Dependency, ResolvedLicense, PolicyEvaluation,
-} from './types.js';
+} from '../types.js';
 
 /**
  * Create a new snapshot from audit results.

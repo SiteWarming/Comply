@@ -10,7 +10,7 @@
 
 import { readFile, stat } from 'node:fs/promises';
 import { join, dirname, relative, basename } from 'node:path';
-import type { Dependency, ManifestFile, DistributionModel } from './types.js';
+import type { Dependency, ManifestFile, DistributionModel } from '../types.js';
 
 export interface Workspace {
   name: string;

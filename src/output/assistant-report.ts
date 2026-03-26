@@ -12,9 +12,9 @@
 import type {
   PolicyEvaluation, DistributionModel, Ecosystem, LicenseTier,
   ComplianceStatus, Severity,
-} from './types.js';
-import type { DependencyHealth } from './health.js';
-import { findUsageLocations, extractCodeSnippets } from './analysis.js';
+} from '../types.js';
+import type { DependencyHealth } from '../pipeline/health.js';
+import { findUsageLocations, extractCodeSnippets } from '../pipeline/analysis.js';
 
 export interface AssistantReport {
   meta: {

@@ -8,7 +8,7 @@
 // more polished output when an API key is present.
 // ============================================================================
 
-import type { AuditReport, PolicyEvaluation, Severity, LicenseTier } from './types.js';
+import type { AuditReport, PolicyEvaluation, Severity, LicenseTier } from '../types.js';
 
 /**
  * Generate a plain-English executive summary from audit results.
